@@ -113,10 +113,16 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
     let _ = write!(svg, r##"</defs>"##);
 
     // 背景画像レイヤー（ぼかし付き）
+    // ぼかしの端フェードを防ぐため、画像をビューポートより大きく描画
     if let Some(bg_image) = options.background_image {
+        let blur_margin = options.blur_radius * 3.0;
+        let img_x = -blur_margin;
+        let img_y = -blur_margin;
+        let img_w = total_width + blur_margin * 2.0;
+        let img_h = total_height + blur_margin * 2.0;
         let _ = write!(
             svg,
-            r##"<image href="data:image/png;base64,{bg_image}" x="0" y="0" width="{total_width}" height="{total_height}" filter="url(#blur)"/>"##
+            r##"<image href="data:image/png;base64,{bg_image}" x="{img_x}" y="{img_y}" width="{img_w}" height="{img_h}" preserveAspectRatio="xMidYMid slice" filter="url(#blur)"/>"##
         );
     }
 

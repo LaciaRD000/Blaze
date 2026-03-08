@@ -1,6 +1,78 @@
+use std::io::Cursor;
+
 use base64::Engine;
 
 use crate::error::BlazeError;
+
+/// 埋め込み背景画像データ
+static DENIM_WEBP: &[u8] =
+    include_bytes!("../../assets/backgrounds/denim.webp");
+static REPEATED_SQUARE_DARK_WEBP: &[u8] =
+    include_bytes!("../../assets/backgrounds/repeated-square-dark.webp");
+
+/// WebP 画像データをデコードする
+fn decode_webp(
+    webp_data: &[u8],
+) -> Result<image::DynamicImage, BlazeError> {
+    image::load_from_memory_with_format(webp_data, image::ImageFormat::WebP)
+        .map_err(|e| {
+            BlazeError::rendering(format!("WebP画像のデコードに失敗: {e}"))
+        })
+}
+
+/// タイル画像を指定サイズまで繰り返し敷き詰めてPNGバイト列を返す
+fn tile_to_png(
+    img: &image::DynamicImage,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, BlazeError> {
+    let tile = img.to_rgba8();
+    let tile_w = tile.width();
+    let tile_h = tile.height();
+    let mut canvas = image::RgbaImage::new(width, height);
+
+    for y in (0..height).step_by(tile_h as usize) {
+        for x in (0..width).step_by(tile_w as usize) {
+            image::imageops::overlay(
+                &mut canvas,
+                &tile,
+                x as i64,
+                y as i64,
+            );
+        }
+    }
+
+    let mut buf = Vec::new();
+    image::DynamicImage::ImageRgba8(canvas)
+        .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+        .map_err(|e| {
+            BlazeError::rendering(format!("PNGエンコードに失敗: {e}"))
+        })?;
+    Ok(buf)
+}
+
+/// 背景画像IDに対応するPNGバイト列を返す
+/// "gradient" → 動的生成、"denim" / "repeated-square-dark" → タイリングで敷き詰め
+pub fn load_background(
+    background_id: &str,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, BlazeError> {
+    match background_id {
+        "gradient" => Ok(generate_default_background(width, height)),
+        "denim" => {
+            let img = decode_webp(DENIM_WEBP)?;
+            tile_to_png(&img, width, height)
+        }
+        "repeated-square-dark" => {
+            let img = decode_webp(REPEATED_SQUARE_DARK_WEBP)?;
+            tile_to_png(&img, width, height)
+        }
+        other => Err(BlazeError::rendering(format!(
+            "不明な背景画像ID: {other}"
+        ))),
+    }
+}
 
 /// PNG画像データを指定サイズにリサイズし、Base64文字列として返す
 pub fn resize_to_base64(
@@ -145,5 +217,52 @@ mod tests {
     fn resize_to_base64_invalid_png_returns_error() {
         let result = resize_to_base64(b"not a png", 100, 50);
         assert!(result.is_err(), "不正なPNGデータはエラーを返すべき");
+    }
+
+    #[test]
+    fn load_background_gradient_produces_valid_png() {
+        let png = load_background("gradient", 200, 100)
+            .expect("グラデーション背景の読み込みに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn load_background_denim_produces_valid_png() {
+        let png = load_background("denim", 200, 100)
+            .expect("denim背景の読み込みに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn load_background_repeated_square_dark_produces_valid_png() {
+        let png = load_background("repeated-square-dark", 200, 100)
+            .expect("repeated-square-dark背景の読み込みに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn load_background_unknown_returns_error() {
+        let result = load_background("unknown", 200, 100);
+        assert!(result.is_err(), "不明な背景IDはエラーを返すべき");
+    }
+
+    #[test]
+    fn load_background_denim_tiled_matches_target_size() {
+        let png = load_background("denim", 864, 200)
+            .expect("denim背景のタイリングに成功するべき");
+        let pixmap = tiny_skia::Pixmap::decode_png(&png)
+            .expect("PNGデコードに成功するべき");
+        assert_eq!(pixmap.width(), 864);
+        assert_eq!(pixmap.height(), 200);
+    }
+
+    #[test]
+    fn load_background_repeated_square_dark_tiled_matches_target_size() {
+        let png = load_background("repeated-square-dark", 864, 300)
+            .expect("repeated-square-dark背景のタイリングに成功するべき");
+        let pixmap = tiny_skia::Pixmap::decode_png(&png)
+            .expect("PNGデコードに成功するべき");
+        assert_eq!(pixmap.width(), 864);
+        assert_eq!(pixmap.height(), 300);
     }
 }

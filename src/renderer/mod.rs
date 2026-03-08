@@ -151,25 +151,28 @@ impl Renderer {
             highlight::highlight(code, language, &self.syntax_set, theme);
 
         // 背景画像の生成（background_id が指定されている場合）
-        let bg_image_base64 = if render_options.background_image.is_some() {
-            // SVG の総サイズを推定して背景画像を生成
-            let window_width = 800u32;
-            let shadow_margin = 32u32;
-            let total_width = window_width + shadow_margin * 2;
-            let total_height =
-                shadow_margin * 2 + 36 + 32 + 20 * lines.len() as u32;
-            let png = background::generate_default_background(
-                total_width,
-                total_height,
-            );
-            Some(background::resize_to_base64(
-                &png,
-                total_width,
-                total_height,
-            )?)
-        } else {
-            None
-        };
+        let bg_image_base64 =
+            if let Some(bg_id) = &render_options.background_image {
+                // SVG の総サイズを推定（svg_builder と同じ計算）
+                let window_width = 800u32;
+                let shadow_margin = 32u32;
+                let total_width = window_width + shadow_margin * 2;
+                let total_height =
+                    shadow_margin * 2 + 36 + 32 + 20 * lines.len() as u32;
+                // ぼかしの端フェード防止のためマージンを加算
+                let blur_margin =
+                    (render_options.blur_radius * 3.0).ceil() as u32;
+                let img_width = total_width + blur_margin * 2;
+                let img_height = total_height + blur_margin * 2;
+                let png = background::load_background(
+                    bg_id, img_width, img_height,
+                )?;
+                Some(background::resize_to_base64(
+                    &png, img_width, img_height,
+                )?)
+            } else {
+                None
+            };
 
         let svg_options = svg_builder::SvgOptions {
             bg_color: &bg_color,
@@ -366,10 +369,10 @@ mod tests {
     }
 
     #[test]
-    fn render_with_options_applies_background_image() {
+    fn render_with_options_applies_background_gradient() {
         let renderer = Renderer::new();
         let opts = RenderOptions {
-            background_image: Some("default".to_string()),
+            background_image: Some("gradient".to_string()),
             ..Default::default()
         };
         let svg = renderer
@@ -382,6 +385,38 @@ mod tests {
         assert!(
             svg.contains("<image"),
             "背景画像の image 要素が含まれるべき"
+        );
+    }
+
+    #[test]
+    fn render_with_options_applies_background_denim() {
+        let renderer = Renderer::new();
+        let opts = RenderOptions {
+            background_image: Some("denim".to_string()),
+            ..Default::default()
+        };
+        let svg = renderer
+            .render_svg_with_options("test", None, "base16-ocean.dark", &opts)
+            .expect("SVG生成に成功するべき");
+        assert!(
+            svg.contains("<image"),
+            "denim 背景の image 要素が含まれるべき"
+        );
+    }
+
+    #[test]
+    fn render_with_options_applies_background_repeated_square_dark() {
+        let renderer = Renderer::new();
+        let opts = RenderOptions {
+            background_image: Some("repeated-square-dark".to_string()),
+            ..Default::default()
+        };
+        let svg = renderer
+            .render_svg_with_options("test", None, "base16-ocean.dark", &opts)
+            .expect("SVG生成に成功するべき");
+        assert!(
+            svg.contains("<image"),
+            "repeated-square-dark 背景の image 要素が含まれるべき"
         );
     }
 }

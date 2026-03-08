@@ -122,7 +122,7 @@ pub async fn render_message(
         blur_radius: theme.blur_radius,
         show_line_numbers: theme.show_line_numbers != 0,
         max_line_length: Some(max_line_length),
-        background_image: if theme.background_id == "default" {
+        background_image: if theme.background_id == "none" {
             None
         } else {
             Some(theme.background_id.clone())

@@ -21,8 +21,8 @@ impl UserTheme {
     pub fn with_defaults(user_id: i64) -> Self {
         Self {
             user_id,
-            color_scheme: "base16-ocean.dark".to_string(),
-            background_id: "default".to_string(),
+            color_scheme: "base16-eighties.dark".to_string(),
+            background_id: "gradient".to_string(),
             blur_radius: 8.0,
             opacity: 0.75,
             font_family: "Fira Code".to_string(),

@@ -66,10 +66,14 @@ impl ColorSchemeChoice {
 /// 背景画像の選択肢
 #[derive(Debug, Clone, poise::ChoiceParameter)]
 pub enum BackgroundChoice {
-    #[name = "なし"]
-    Default,
-    #[name = "グラデーション"]
+    #[name = "none"]
+    None,
+    #[name = "gradient"]
     Gradient,
+    #[name = "denim"]
+    Denim,
+    #[name = "repeated-square-dark"]
+    RepeatedSquareDark,
 }
 
 /// テーマ設定を変更
@@ -120,8 +124,10 @@ pub async fn set(
     }
     if let Some(bg) = background {
         theme.background_id = match bg {
-            BackgroundChoice::Default => "default".to_string(),
+            BackgroundChoice::None => "none".to_string(),
             BackgroundChoice::Gradient => "gradient".to_string(),
+            BackgroundChoice::Denim => "denim".to_string(),
+            BackgroundChoice::RepeatedSquareDark => "repeated-square-dark".to_string(),
         };
     }
     if let Some(b) = blur {
@@ -218,7 +224,7 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
         blur_radius: theme.blur_radius,
         show_line_numbers: theme.show_line_numbers != 0,
         max_line_length: Some(max_line_length),
-        background_image: if theme.background_id == "default" {
+        background_image: if theme.background_id == "none" {
             None
         } else {
             Some(theme.background_id.clone())

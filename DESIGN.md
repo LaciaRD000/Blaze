@@ -20,7 +20,7 @@ blaze-bot/
 │   └── 001_create_user_themes.down.sql  # DROP TABLE (ロールバック用)
 ├── assets/
 │   ├── fonts/                    # 埋め込みフォント (FiraCode, PlemolJP, HackGen NF)
-│   └── backgrounds/              # デフォルト背景画像
+│   └── backgrounds/              # 背景画像 (denim.webp, repeated-square-dark.webp)
 ├── src/
 │   ├── main.rs                   # エントリポイント、Bot起動
 │   ├── config.rs                 # 設定管理 (Settings構造体、バリデーション)
@@ -249,8 +249,8 @@ pub fn escape_for_svg(text: &str) -> String;
 #[derive(sqlx::FromRow, Clone)]
 pub struct UserTheme {
     pub user_id: i64,           // Discord user ID
-    pub color_scheme: String,   // syntect テーマ名 (e.g. "base16-ocean.dark")
-    pub background_id: String,  // 背景画像識別子 (e.g. "default", "mountain")
+    pub color_scheme: String,   // syntect テーマ名 (e.g. "base16-eighties.dark")
+    pub background_id: String,  // 背景画像識別子 (e.g. "default", "gradient", "denim", "repeated-square-dark")
     pub blur_radius: f32,       // ガウスぼかし強度 (0.0 - 30.0)
     pub opacity: f32,           // ウィンドウ不透明度 (0.3 - 1.0)
     pub font_family: String,    // フォント名 (e.g. "Fira Code")
@@ -537,8 +537,8 @@ pub async fn reset(ctx: Context<'_>) -> Result<(), Error> { /* DB削除 */ }
 -- migrations/001_create_user_themes.up.sql
 CREATE TABLE IF NOT EXISTS user_themes (
     user_id         BIGINT PRIMARY KEY,  -- Discord user ID
-    color_scheme    TEXT NOT NULL DEFAULT 'base16-ocean.dark',
-    background_id   TEXT NOT NULL DEFAULT 'default',
+    color_scheme    TEXT NOT NULL DEFAULT 'base16-eighties.dark',
+    background_id   TEXT NOT NULL DEFAULT 'gradient',
     blur_radius     DOUBLE PRECISION NOT NULL DEFAULT 8.0,
     opacity         DOUBLE PRECISION NOT NULL DEFAULT 0.75,
     font_family     TEXT NOT NULL DEFAULT 'Fira Code',

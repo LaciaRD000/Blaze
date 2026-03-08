@@ -14,6 +14,7 @@ syntect = { version = "5", default-features = false, features = ["default-syntax
 # 画像生成
 resvg = "0.45"
 tiny-skia = "0.11"
+image = { version = "0.25", default-features = false, features = ["webp", "png"] }
 
 # データベース
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "chrono"] }

@@ -48,7 +48,7 @@ fn render_pipeline_with_background_image() {
     let code = "console.log('test');";
 
     let opts = RenderOptions {
-        background_image: Some("default".to_string()),
+        background_image: Some("gradient".to_string()),
         ..Default::default()
     };
 
