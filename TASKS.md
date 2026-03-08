@@ -54,18 +54,18 @@
 
 ## Phase 6: 堅牢性・セキュリティ
 
-- [ ] governor によるレート制限
-- [ ] 入力サニタイズ強化（制御文字除去、Unicode NFC正規化）
-- [ ] SVGインジェクション防止の検証
-- [ ] 設定管理（config/default.toml + BLAZE_* 環境変数オーバーライド）
+- [x] governor によるレート制限
+- [x] 入力サニタイズ強化（制御文字除去、Unicode NFC正規化）
+- [x] SVGインジェクション防止の検証
+- [x] 設定管理（config/default.toml + BLAZE_* 環境変数オーバーライド）
 
 ## Phase 7: ロギング・監視
 
-- [ ] tracing / tracing-subscriber 導入
-- [ ] ログレベル運用（ERROR / WARN / INFO / DEBUG）
-- [ ] レンダリング処理時間の計測ログ
+- [x] tracing / tracing-subscriber 導入
+- [x] ログレベル運用（ERROR / WARN / INFO / DEBUG）
+- [x] レンダリング処理時間の計測ログ
 
 ## Phase 8: UX向上
 
-- [ ] 行番号表示オプション（show_line_numbers）
+- [x] 行番号表示オプション（show_line_numbers）
 - [ ] 複数コードブロック対応（将来）
