@@ -58,6 +58,8 @@ pub async fn render_message(
     ctx: Context<'_>,
     #[description = "対象メッセージ"] msg: serenity::Message,
 ) -> Result<(), Error> {
+    let start = std::time::Instant::now();
+
     // 0. レート制限チェック
     let user_id_for_rate = ctx.author().id.get();
     if ctx
@@ -66,6 +68,7 @@ pub async fn render_message(
         .check_key(&user_id_for_rate)
         .is_err()
     {
+        tracing::warn!(user_id = user_id_for_rate, "レート制限超過");
         ctx.send(
             poise::CreateReply::default()
                 .content("レート制限に達しました。しばらくお待ちください。")
@@ -142,6 +145,13 @@ pub async fn render_message(
     .map_err(|e| BlazeError::rendering(e.to_string()))??;
 
     drop(_permit);
+
+    let elapsed = start.elapsed();
+    tracing::info!(
+        user_id = user_id_for_rate,
+        elapsed_ms = elapsed.as_millis() as u64,
+        "レンダリング完了"
+    );
 
     // 6. 画像をリプライとして送信
     let attachment = serenity::CreateAttachment::bytes(png, "code.png");

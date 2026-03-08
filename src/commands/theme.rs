@@ -94,6 +94,12 @@ pub async fn set(
 
     repo.upsert_theme(&theme).await?;
 
+    tracing::info!(
+        user_id,
+        color_scheme = %theme.color_scheme,
+        "テーマ更新"
+    );
+
     ctx.send(
         poise::CreateReply::default()
             .content("テーマを更新しました")
@@ -151,6 +157,8 @@ pub async fn reset(ctx: Context<'_>) -> Result<(), Error> {
     let repo = SqliteThemeRepository::new(ctx.data().db.clone());
 
     repo.delete_theme(user_id).await?;
+
+    tracing::info!(user_id, "テーマリセット");
 
     ctx.send(
         poise::CreateReply::default()
