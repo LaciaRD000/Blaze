@@ -37,9 +37,9 @@
 
 ## Phase 4: テーマ管理 + DB
 
-- [x] SQLite セットアップ + マイグレーション（001_create_user_themes）
+- [x] ~~SQLite~~ Supabase (PostgreSQL) セットアップ + マイグレーション（001_create_user_themes）
 - [x] db/models.rs: UserTheme 構造体 + CRUD
-- [x] db/mod.rs: ThemeRepository トレイト + SqliteThemeRepository
+- [x] db/mod.rs: ThemeRepository トレイト + PgThemeRepository
 - [x] /theme set コマンド
 - [x] /theme preview コマンド
 - [x] /theme reset コマンド
