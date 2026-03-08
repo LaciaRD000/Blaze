@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use poise::serenity_prelude as serenity;
 use regex::Regex;
 
+use crate::error::BlazeError;
 use crate::sanitize::sanitize_code;
 use crate::{Context, Error};
 
@@ -90,12 +93,26 @@ pub async fn render_message(
     // 3. 入力サニタイズ
     let code_block = code_block.sanitized();
 
-    // 4. スタブ: 画像の代わりにコードブロックの内容をテキストで返す
-    let lang = code_block.language.as_deref().unwrap_or("text");
-    let response =
-        format!("**言語**: {}\n```{}\n{}\n```", lang, lang, code_block.code);
-    ctx.send(poise::CreateReply::default().content(response))
-        .await?;
+    // 4. レンダリング（CPUバウンドなので spawn_blocking）
+    let renderer = Arc::clone(&ctx.data().renderer);
+    let code = code_block.code.clone();
+    let language = code_block.language.clone();
+    let theme_name = "base16-ocean.dark".to_string();
+
+    let png = tokio::task::spawn_blocking(move || {
+        renderer.render(&code, language.as_deref(), &theme_name)
+    })
+    .await
+    .map_err(|e| BlazeError::rendering(e.to_string()))??;
+
+    // 5. 画像をリプライとして送信
+    let attachment = serenity::CreateAttachment::bytes(png, "code.png");
+    ctx.send(
+        poise::CreateReply::default()
+            .attachment(attachment)
+            .reply(true),
+    )
+    .await?;
     Ok(())
 }
 

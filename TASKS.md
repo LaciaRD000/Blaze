@@ -24,7 +24,7 @@
 - [x] renderer/svg_builder.rs: 最小限のSVG文字列生成（背景なし、装飾なし）
 - [x] renderer/rasterize.rs: resvg/tiny-skia で SVG→PNG
 - [x] renderer/mod.rs: Renderer 構造体 + パイプライン統括
-- [ ] render_message をスタブから実画像生成に接続
+- [x] render_message をスタブから実画像生成に接続
 - [ ] スナップショットテスト（insta）導入
 
 ## Phase 3: ビジュアル完成
