@@ -80,11 +80,14 @@ mod tests {
     use syntect::parsing::SyntaxSet;
 
     fn default_syntax_set() -> SyntaxSet {
-        SyntaxSet::load_defaults_newlines()
+        syntect::dumps::from_uncompressed_data(super::super::SYNTAX_SET_DUMP)
+            .expect("SyntaxSet のデシリアライズに失敗")
     }
 
     fn default_theme() -> syntect::highlighting::Theme {
-        let ts = ThemeSet::load_defaults();
+        let ts: ThemeSet =
+            syntect::dumps::from_uncompressed_data(super::super::THEME_SET_DUMP)
+                .expect("ThemeSet のデシリアライズに失敗");
         ts.themes["base16-ocean.dark"].clone()
     }
 

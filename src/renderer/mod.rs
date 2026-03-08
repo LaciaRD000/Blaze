@@ -4,6 +4,13 @@ use resvg::usvg;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
+/// ビルド時にダンプした SyntaxSet バイナリ
+static SYNTAX_SET_DUMP: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/syntax_set.packdump"));
+/// ビルド時にダンプした ThemeSet バイナリ
+static THEME_SET_DUMP: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/theme_set.packdump"));
+
 use crate::error::BlazeError;
 
 pub mod background;
@@ -60,8 +67,14 @@ impl Default for Renderer {
 
 impl Renderer {
     pub fn new() -> Self {
-        let syntax_set = SyntaxSet::load_defaults_newlines();
-        let theme_set = ThemeSet::load_defaults();
+        // ビルド時にダンプした uncompressed バイナリからデシリアライズ
+        // デフォルトの load_defaults_newlines() より高速（圧縮展開をスキップ）
+        let syntax_set: SyntaxSet =
+            syntect::dumps::from_uncompressed_data(SYNTAX_SET_DUMP)
+                .expect("SyntaxSet のデシリアライズに失敗");
+        let theme_set: ThemeSet =
+            syntect::dumps::from_uncompressed_data(THEME_SET_DUMP)
+                .expect("ThemeSet のデシリアライズに失敗");
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
         let background_cache = background::BackgroundCache::new();
