@@ -31,7 +31,7 @@
 
 - [ ] ガウスぼかし背景（feGaussianBlur）
 - [ ] 半透明ウィンドウ矩形（fill-opacity）
-- [ ] タイトルバー（macOS風 / Linux風）
+- [~] タイトルバー（macOS風 / Linux風）
 - [ ] 角丸 + ドロップシャドウ
 - [x] フォント埋め込み（Fira Code + PlemolJP）
 

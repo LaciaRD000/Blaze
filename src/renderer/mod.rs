@@ -45,42 +45,22 @@ impl Renderer {
         language: Option<&str>,
         theme_name: &str,
     ) -> Result<Vec<u8>, BlazeError> {
-        // テーマ取得（見つからなければデフォルトにフォールバック）
-        let theme = self
-            .theme_set
-            .themes
-            .get(theme_name)
-            .or_else(|| self.theme_set.themes.get("base16-ocean.dark"))
-            .ok_or_else(|| {
-                BlazeError::rendering("デフォルトテーマが見つかりません")
-            })?;
-
-        // テーマの背景色を取得
-        let bg =
-            theme
-                .settings
-                .background
-                .unwrap_or(syntect::highlighting::Color {
-                    r: 30,
-                    g: 30,
-                    b: 46,
-                    a: 255,
-                });
-        let bg_color = format!("#{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b);
-
-        // 1. ハイライト
-        let lines =
-            highlight::highlight(code, language, &self.syntax_set, theme);
-
-        // 2. SVG生成
-        let svg = svg_builder::build_svg(&lines, &bg_color);
-
-        // 3. PNG変換
+        let svg = self.build_svg_internal(code, language, theme_name)?;
         rasterize::rasterize(&svg, Arc::clone(&self.font_db))
     }
 
     /// SVG文字列のみを返す（スナップショットテスト用）
     pub fn render_svg(
+        &self,
+        code: &str,
+        language: Option<&str>,
+        theme_name: &str,
+    ) -> Result<String, BlazeError> {
+        self.build_svg_internal(code, language, theme_name)
+    }
+
+    /// ハイライト → SVG生成の共通処理
+    fn build_svg_internal(
         &self,
         code: &str,
         language: Option<&str>,
@@ -110,7 +90,13 @@ impl Renderer {
         let lines =
             highlight::highlight(code, language, &self.syntax_set, theme);
 
-        Ok(svg_builder::build_svg(&lines, &bg_color))
+        let options = svg_builder::SvgOptions {
+            bg_color: &bg_color,
+            language,
+            title_bar_style: "macos",
+        };
+
+        Ok(svg_builder::build_svg(&lines, &options))
     }
 }
 

@@ -7,30 +7,60 @@ const FONT_SIZE: f32 = 14.0;
 const LINE_HEIGHT: f32 = 20.0;
 const PADDING_X: f32 = 16.0;
 const PADDING_Y: f32 = 16.0;
+const TITLE_BAR_HEIGHT: f32 = 36.0;
 
-/// ハイライト済みコード行からSVG文字列を生成する（最小限：背景色 + 色付きテキスト）
-pub fn build_svg(lines: &[HighlightedLine], bg_color: &str) -> String {
+/// SVG生成オプション
+pub struct SvgOptions<'a> {
+    pub bg_color: &'a str,
+    pub language: Option<&'a str>,
+    pub title_bar_style: &'a str,
+}
+
+impl Default for SvgOptions<'_> {
+    fn default() -> Self {
+        Self {
+            bg_color: "#1e1e2e",
+            language: None,
+            title_bar_style: "macos",
+        }
+    }
+}
+
+/// ハイライト済みコード行からSVG文字列を生成する
+pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
     let width = 800.0;
-    let height = PADDING_Y * 2.0 + LINE_HEIGHT * lines.len() as f32;
+    let code_height = PADDING_Y * 2.0 + LINE_HEIGHT * lines.len() as f32;
+    let title_bar_h = if options.title_bar_style == "none" {
+        0.0
+    } else {
+        TITLE_BAR_HEIGHT
+    };
+    let height = title_bar_h + code_height;
 
     let mut svg = String::new();
     let _ = write!(
         svg,
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">"#
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">"##
     );
 
     // 背景
+    let bg = options.bg_color;
     let _ = write!(
         svg,
-        r#"<rect width="{width}" height="{height}" fill="{bg_color}"/>"#
+        r##"<rect width="{width}" height="{height}" fill="{bg}"/>"##
     );
+
+    // タイトルバー
+    if options.title_bar_style == "macos" {
+        build_macos_title_bar(&mut svg, options.language);
+    }
 
     // コード行
     for (i, line) in lines.iter().enumerate() {
-        let y = PADDING_Y + FONT_SIZE + LINE_HEIGHT * i as f32;
+        let y = title_bar_h + PADDING_Y + FONT_SIZE + LINE_HEIGHT * i as f32;
         let _ = write!(
             svg,
-            r#"<text x="{PADDING_X}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" xml:space="preserve">"#
+            r##"<text x="{PADDING_X}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" xml:space="preserve">"##
         );
 
         for token in &line.tokens {
@@ -43,22 +73,22 @@ pub fn build_svg(lines: &[HighlightedLine], bg_color: &str) -> String {
             if token.bold && token.italic {
                 let _ = write!(
                     svg,
-                    r#"<tspan fill="{color_hex}" font-weight="bold" font-style="italic">{escaped}</tspan>"#
+                    r##"<tspan fill="{color_hex}" font-weight="bold" font-style="italic">{escaped}</tspan>"##
                 );
             } else if token.bold {
                 let _ = write!(
                     svg,
-                    r#"<tspan fill="{color_hex}" font-weight="bold">{escaped}</tspan>"#
+                    r##"<tspan fill="{color_hex}" font-weight="bold">{escaped}</tspan>"##
                 );
             } else if token.italic {
                 let _ = write!(
                     svg,
-                    r#"<tspan fill="{color_hex}" font-style="italic">{escaped}</tspan>"#
+                    r##"<tspan fill="{color_hex}" font-style="italic">{escaped}</tspan>"##
                 );
             } else {
                 let _ = write!(
                     svg,
-                    r#"<tspan fill="{color_hex}">{escaped}</tspan>"#
+                    r##"<tspan fill="{color_hex}">{escaped}</tspan>"##
                 );
             }
         }
@@ -68,6 +98,23 @@ pub fn build_svg(lines: &[HighlightedLine], bg_color: &str) -> String {
 
     svg.push_str("</svg>");
     svg
+}
+
+/// macOS風タイトルバー（赤・黄・緑の円ボタン + 言語名）
+fn build_macos_title_bar(svg: &mut String, language: Option<&str>) {
+    // 3つの円ボタン
+    let _ = write!(svg, r##"<circle cx="20" cy="18" r="6" fill="#ff5f57"/>"##);
+    let _ = write!(svg, r##"<circle cx="40" cy="18" r="6" fill="#febc2e"/>"##);
+    let _ = write!(svg, r##"<circle cx="60" cy="18" r="6" fill="#28c840"/>"##);
+
+    // 言語名テキスト
+    if let Some(lang) = language {
+        let escaped_lang = escape_for_svg(lang);
+        let _ = write!(
+            svg,
+            r##"<text x="400" y="22" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="13" fill="#6c7086" text-anchor="middle">{escaped_lang}</text>"##
+        );
+    }
 }
 
 #[cfg(test)]
@@ -119,9 +166,17 @@ mod tests {
         ]
     }
 
+    fn default_options() -> SvgOptions<'static> {
+        SvgOptions {
+            bg_color: "#1e1e2e",
+            language: Some("rust"),
+            title_bar_style: "macos",
+        }
+    }
+
     #[test]
     fn build_svg_contains_svg_root() {
-        let svg = build_svg(&sample_lines(), "#1e1e2e");
+        let svg = build_svg(&sample_lines(), &default_options());
         assert!(svg.contains("<svg"));
         assert!(svg.contains("</svg>"));
     }
@@ -130,11 +185,11 @@ mod tests {
     fn build_svg_height_depends_on_line_count() {
         let one_line = vec![sample_lines().into_iter().next().unwrap()];
         let two_lines = sample_lines();
+        let opts = default_options();
 
-        let svg1 = build_svg(&one_line, "#1e1e2e");
-        let svg2 = build_svg(&two_lines, "#1e1e2e");
+        let svg1 = build_svg(&one_line, &opts);
+        let svg2 = build_svg(&two_lines, &opts);
 
-        // 2行の方が高さが大きい
         let h1 = extract_height(&svg1);
         let h2 = extract_height(&svg2);
         assert!(h2 > h1, "2行のSVGの方が高さが大きいべき: h1={h1}, h2={h2}");
@@ -142,15 +197,14 @@ mod tests {
 
     #[test]
     fn build_svg_contains_tspan_with_color() {
-        let svg = build_svg(&sample_lines(), "#1e1e2e");
-        // tspan に fill 属性が含まれる
+        let svg = build_svg(&sample_lines(), &default_options());
         assert!(svg.contains("<tspan"));
         assert!(svg.contains("fill=\"#"));
     }
 
     #[test]
     fn build_svg_contains_xml_space_preserve() {
-        let svg = build_svg(&sample_lines(), "#1e1e2e");
+        let svg = build_svg(&sample_lines(), &default_options());
         assert!(
             svg.contains("xml:space=\"preserve\""),
             "xml:space=\"preserve\" が含まれるべき"
@@ -172,7 +226,7 @@ mod tests {
                 italic: false,
             }],
         }];
-        let svg = build_svg(&lines, "#1e1e2e");
+        let svg = build_svg(&lines, &default_options());
         assert!(svg.contains("&lt;div&gt;"));
         assert!(svg.contains("&amp;"));
         assert!(svg.contains("&quot;"));
@@ -180,8 +234,44 @@ mod tests {
 
     #[test]
     fn build_svg_bold_has_font_weight() {
-        let svg = build_svg(&sample_lines(), "#1e1e2e");
+        let svg = build_svg(&sample_lines(), &default_options());
         assert!(svg.contains("font-weight=\"bold\""));
+    }
+
+    #[test]
+    fn build_svg_macos_title_bar_has_circles() {
+        let svg = build_svg(&sample_lines(), &default_options());
+        assert!(
+            svg.contains(r##"fill="#ff5f57""##),
+            "赤ボタンが含まれるべき"
+        );
+        assert!(
+            svg.contains(r##"fill="#febc2e""##),
+            "黄ボタンが含まれるべき"
+        );
+        assert!(
+            svg.contains(r##"fill="#28c840""##),
+            "緑ボタンが含まれるべき"
+        );
+    }
+
+    #[test]
+    fn build_svg_macos_title_bar_has_language_name() {
+        let svg = build_svg(&sample_lines(), &default_options());
+        assert!(svg.contains(">rust</text>"), "言語名が含まれるべき");
+    }
+
+    #[test]
+    fn build_svg_no_title_bar_has_no_circles() {
+        let opts = SvgOptions {
+            title_bar_style: "none",
+            ..default_options()
+        };
+        let svg = build_svg(&sample_lines(), &opts);
+        assert!(
+            !svg.contains("circle"),
+            "タイトルバーなしでは circle がないべき"
+        );
     }
 
     /// SVGからheight属性の数値を抽出するヘルパー
