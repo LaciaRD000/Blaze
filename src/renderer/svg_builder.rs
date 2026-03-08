@@ -17,10 +17,6 @@ pub struct SvgOptions<'a> {
     pub language: Option<&'a str>,
     pub title_bar_style: &'a str,
     pub opacity: f64,
-    /// 背景画像のBase64文字列（PNG）。None の場合は背景画像なし
-    pub background_image: Option<&'a str>,
-    /// ガウスぼかしの強度（stdDeviation）
-    pub blur_radius: f64,
     /// 1行あたりの最大文字数。超過分は `…` でトリミング。None で無制限
     pub max_line_length: Option<usize>,
     /// 行番号を表示するか
@@ -34,8 +30,6 @@ impl Default for SvgOptions<'_> {
             language: None,
             title_bar_style: "macos",
             opacity: 0.75,
-            background_image: None,
-            blur_radius: 8.0,
             max_line_length: None,
             show_line_numbers: false,
         }
@@ -102,29 +96,7 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
         svg,
         r##"<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="16" flood-opacity="0.4"/></filter>"##
     );
-    // ガウスぼかしフィルタ（背景画像がある場合のみ）
-    if options.background_image.is_some() {
-        let blur = options.blur_radius;
-        let _ = write!(
-            svg,
-            r##"<filter id="blur"><feGaussianBlur stdDeviation="{blur}"/></filter>"##
-        );
-    }
     let _ = write!(svg, r##"</defs>"##);
-
-    // 背景画像レイヤー（ぼかし付き）
-    // ぼかしの端フェードを防ぐため、画像をビューポートより大きく描画
-    if let Some(bg_image) = options.background_image {
-        let blur_margin = options.blur_radius * 3.0;
-        let img_x = -blur_margin;
-        let img_y = -blur_margin;
-        let img_w = total_width + blur_margin * 2.0;
-        let img_h = total_height + blur_margin * 2.0;
-        let _ = write!(
-            svg,
-            r##"<image href="data:image/png;base64,{bg_image}" x="{img_x}" y="{img_y}" width="{img_w}" height="{img_h}" preserveAspectRatio="xMidYMid slice" filter="url(#blur)"/>"##
-        );
-    }
 
     // ウィンドウグループ（シャドウ + 角丸）
     let _ = write!(
@@ -388,8 +360,6 @@ mod tests {
             language: Some("rust"),
             title_bar_style: "macos",
             opacity: 0.75,
-            background_image: None,
-            blur_radius: 8.0,
             max_line_length: None,
             show_line_numbers: false,
         }
@@ -594,41 +564,11 @@ mod tests {
     }
 
     #[test]
-    fn build_svg_with_background_has_gaussian_blur() {
-        let opts = SvgOptions {
-            // ダミーの1x1 PNG（Base64）
-            background_image: Some(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-            ),
-            blur_radius: 8.0,
-            ..default_options()
-        };
-        let svg = build_svg(&sample_lines(), &opts);
-        assert!(
-            svg.contains("feGaussianBlur"),
-            "ガウスぼかしフィルタが含まれるべき"
-        );
-        assert!(
-            svg.contains("filter=\"url(#blur)\""),
-            "ぼかしフィルタが背景画像に適用されるべき"
-        );
-        assert!(svg.contains("<image"), "背景画像要素が含まれるべき");
-        assert!(
-            svg.contains("data:image/png;base64,"),
-            "Base64埋め込みの背景画像が含まれるべき"
-        );
-    }
-
-    #[test]
-    fn build_svg_without_background_has_no_blur() {
+    fn build_svg_has_no_background_image() {
         let svg = build_svg(&sample_lines(), &default_options());
         assert!(
-            !svg.contains("feGaussianBlur"),
-            "背景画像なしではガウスぼかしフィルタがないべき"
-        );
-        assert!(
             !svg.contains("<image"),
-            "背景画像なしでは image 要素がないべき"
+            "SVGに背景画像が含まれないべき（背景合成はrasterize側で行う）"
         );
     }
 

@@ -49,7 +49,7 @@ fn main() {
 
 | 要素 | 説明 |
 |------|------|
-| 背景 | 画像にガウスぼかし（Gaussian Blur）を適用した半透明背景 |
+| 背景 | テクスチャ/グラデーション背景にガウスぼかし（Gaussian Blur）を適用。Pixmap 直接合成で高速処理 |
 | ウィンドウ枠 | 角丸（border-radius: 12px）、ドロップシャドウ付き |
 | タイトルバー | macOS風（赤・黄・緑の3つのボタン）またはLinux風。言語名を表示 |
 | コード本体 | シンタックスハイライト済みのテキスト。プログラミング用フォントで描画 |
@@ -273,7 +273,9 @@ log_level = "info"
 
 - レンダリング処理はCPUバウンドのため、`tokio::task::spawn_blocking` で非同期ランタイムをブロックしない
 - レンダリングの同時実行数を `max_concurrent_renders`（デフォルト: 4）で制限し、CPU飽和を防止する
-- 背景画像は出力解像度に合わせて事前リサイズし、メモリ消費を抑制する
+- WebP 背景画像は起動時に1回だけデコードし `BackgroundCache` にキャッシュ。リクエストごとの再デコードを排除
+- 背景画像は SVG に Base64 埋め込みせず、Pixmap として直接合成。SVG パースの高速化とメモリ消費の削減を実現
+- テクスチャ背景（denim, repeated-square-dark）は `image::imageops::overlay` でタイリング
 - SVG → PNG ラスタライズ時に 2x スケールを適用し、Discord の高DPI表示でもシャープに表示される高解像度画像を生成する
 
 ### 12.2 セキュリティ
@@ -303,7 +305,7 @@ log_level = "info"
 | 言語 | Rust (Edition 2024, nightly toolchain) |
 | Discord API | poise (serenity を re-export) |
 | 構文解析 | syntect |
-| 画像生成 | resvg / tiny-skia（SVG → PNG） |
+| 画像生成 | resvg / tiny-skia（SVG → PNG）、image（WebP デコード・タイリング） |
 | データベース | PostgreSQL / Supabase (sqlx) |
 | エラーハンドリング | thiserror |
 | レート制限 | governor |

@@ -31,10 +31,11 @@ blaze-bot/
 │   │   ├── render.rs             # コンテキストメニュー「ターミナル画像化」
 │   │   └── theme.rs              # /theme set, /theme preview 等
 │   ├── renderer/
-│   │   ├── mod.rs                # レンダリングパイプライン統括
+│   │   ├── mod.rs                # レンダリングパイプライン統括 (Renderer + BackgroundCache)
+│   │   ├── background.rs         # 背景画像キャッシュ・タイリング・グラデーション生成
 │   │   ├── highlight.rs          # syntect によるトークン化・色付け
-│   │   ├── svg_builder.rs        # 動的SVG文字列の組み立て
-│   │   └── rasterize.rs          # resvg/tiny-skia で SVG→PNG変換
+│   │   ├── svg_builder.rs        # 動的SVG文字列の組み立て（コードのみ、背景なし）
+│   │   └── rasterize.rs          # resvg/tiny-skia で SVG→PNG変換 + 背景合成
 │   └── db/
 │       ├── mod.rs                # ThemeRepository トレイト、PgPoolコネクションプール
 │       └── models.rs             # UserTheme 構造体・CRUD
@@ -68,13 +69,14 @@ blaze-bot/
   → トークン化 & 色付け (renderer/highlight.rs)
   → ユーザーテーマ取得 (db/ → キャッシュ層 → UserTheme or デフォルト)
   → SVG文字列生成 (renderer/svg_builder.rs)
-      - 背景画像 + ガウスぼかし (SVG feGaussianBlur)
       - 半透明ウィンドウ矩形 (fill-opacity)
       - タイトルバー + 角丸 + ドロップシャドウ
       - 色付きテキスト (<tspan>) の配置
       - フォント: font-family="Fira Code", "PlemolJP", sans-serif
-  → PNG ラスタライズ (renderer/rasterize.rs)
-      - resvg::render() → tiny_skia::Pixmap → PNG bytes
+      - ※ 背景画像は SVG に含めない（rasterize 側で合成）
+  → PNG ラスタライズ + 背景合成 (renderer/rasterize.rs)
+      - 背景あり: BackgroundCache → Pixmap タイリング → ぼかし → コード SVG を上に合成
+      - 背景なし: resvg::render() → tiny_skia::Pixmap → PNG bytes
       - 2x スケールで高解像度レンダリング（Discord の高DPI表示に対応）
   → Discord に通常メッセージとしてリプライ (画像添付、全員に表示)
   → メトリクス記録 (レンダリング回数、処理時間)
@@ -266,35 +268,46 @@ pub struct UserTheme {
 pub struct Renderer {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
-    pub font_db: fontdb::Database,
+    pub font_db: Arc<usvg::fontdb::Database>,
+    pub background_cache: BackgroundCache, // WebP デコード済みタイルをキャッシュ
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        // usvg::Options に fontdb を統合する
-        // resvg はテキスト描画時にこの fontdb を参照してグリフを解決する
-        let mut options = usvg::Options::default();
-        load_fonts(options.fontdb_mut());
-
         let syntax_set = SyntaxSet::load_defaults_newlines();
         let theme_set = ThemeSet::load_defaults();
-        let font_db = std::mem::take(options.fontdb_mut()); // Renderer 内でも保持
+        let mut font_db = usvg::fontdb::Database::new();
+        load_fonts(&mut font_db);
+        let background_cache = BackgroundCache::new(); // 起動時に1回だけ WebP デコード
 
-        Self { syntax_set, theme_set, font_db }
+        Self { syntax_set, theme_set, font_db: Arc::new(font_db), background_cache }
+    }
+
+    /// 背景ありの場合: SVG(コードのみ) + 背景Pixmap を rasterize 側で合成
+    /// 背景なしの場合: SVG → PNG の従来パス
+    pub fn render_with_options(&self, code, language, theme_name, options) -> Result<Vec<u8>> {
+        let svg = self.build_svg_internal(code, language, theme_name, options)?;
+        if let Some(bg_id) = &options.background_image {
+            let bg_pixmap = background::load_background_pixmap(&self.background_cache, bg_id, w, h)?;
+            rasterize::rasterize_with_background(&svg, self.font_db.clone(), bg_pixmap, blur, margin)
+        } else {
+            rasterize::rasterize(&svg, self.font_db.clone())
+        }
     }
 }
 
-/// フォント読み込みを独立した関数に切り出す
-/// 初期実装: include_bytes! による静的埋め込み（単一バイナリでデプロイ可能）
-/// 将来: アセット肥大化時に std::fs::read による動的読み込みへ切り替え可能
-fn load_fonts(font_db: &mut fontdb::Database) {
+/// BackgroundCache: WebP 背景画像を起動時にデコードしてキャッシュ
+/// リクエストごとの WebP デコードを排除し、Pixmap タイリングのみで背景を生成
+pub struct BackgroundCache {
+    denim: image::RgbaImage,
+    repeated_square_dark: image::RgbaImage,
+}
+
+fn load_fonts(font_db: &mut usvg::fontdb::Database) {
     font_db.load_font_data(include_bytes!("../assets/fonts/FiraCode-Regular.ttf").to_vec());
     font_db.load_font_data(include_bytes!("../assets/fonts/PlemolJP-Regular.ttf").to_vec());
     font_db.load_font_data(include_bytes!("../assets/fonts/HackGenConsoleNF-Regular.ttf").to_vec());
 }
-
-// リソース制限値は Settings.max_code_lines / Settings.max_code_chars を参照する
-// ハードコードされた定数は持たない（Single Source of Truth = Settings）
 ```
 
 ### ハイライト結果 (src/renderer/highlight.rs)
@@ -483,29 +496,18 @@ pub async fn reset(ctx: Context<'_>) -> Result<(), Error> { /* DB削除 */ }
 
 ## SVGテンプレート構造 (svg_builder.rs)
 
-生成するSVGの論理構造:
+生成するSVGの論理構造（コードのみ。背景画像は rasterize 側で Pixmap 合成する）:
 
 ```svg
 <svg width="..." height="...">
   <defs>
-    <!-- ガウスぼかしフィルタ -->
-    <filter id="blur">
-      <feGaussianBlur stdDeviation="{blur_radius}" />
-    </filter>
     <!-- ドロップシャドウ -->
     <filter id="shadow">
       <feDropShadow dx="0" dy="8" stdDeviation="16" flood-opacity="0.4" />
     </filter>
-    <!-- 角丸クリップ -->
-    <clipPath id="rounded">
-      <rect rx="12" ry="12" ... />
-    </clipPath>
   </defs>
 
-  <!-- レイヤー1: 背景画像 (ぼかし付き) -->
-  <image href="data:image/png;base64,..." filter="url(#blur)" />
-
-  <!-- レイヤー2: ウィンドウ本体 (影 + 角丸 + 半透明) -->
+  <!-- ウィンドウ本体 (影 + 角丸 + 半透明) -->
   <g filter="url(#shadow)">
     <rect rx="12" fill="rgba(30,30,46,{opacity})" clip-path="url(#rounded)" />
 
@@ -588,6 +590,7 @@ syntect = { version = "5", default-features = false, features = ["default-syntax
 # 画像生成
 resvg = "0.45"
 tiny-skia = "0.11"
+image = { version = "0.25", default-features = false, features = ["webp", "png"] }  # WebP背景画像デコード・タイリング
 
 # データベース
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "chrono"] }
@@ -641,7 +644,7 @@ insta = "1"            # スナップショットテスト
 
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGは文字列として動的生成**: テンプレートエンジン不要。`format!` / `write!` で組み立てるのが最もシンプルかつ高速
-- **背景画像はBase64でSVGに埋め込み**: 外部ファイル参照を避け、resvgが単体でレンダリングできるようにする
+- **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード SVG の Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
 - **コードブロック抽出は正規表現**: `` ```(\w*)\n([\s\S]*?)``` `` で言語タグとコード本体を分離
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する
@@ -824,13 +827,14 @@ PythonやGoなどインデントが重要な言語で、コードが左詰めに
 - `svg_builder` で超過行をトリミングし、末尾に `...` を表示する
 - 画像幅は `max_line_length` に基づいて固定し、Discordの表示領域を超過しない
 
-### 14. 背景画像のメモリ効率最適化
+### 14. 背景画像のパフォーマンス最適化
 
-高解像度の背景画像によるSVGデータ肥大化とメモリ消費を抑制する。
+背景画像のレンダリングを高速化し、メモリ消費を抑制する。
 
-- SVG埋め込み前に、ウィンドウサイズ（出力解像度）に合わせて背景画像を事前リサイズする
-- `image` クレート等で縮小 → Base64エンコード → SVG埋め込みの順で処理
-- 不要なピクセルデータを削減し、ラスタライズ時のメモリと処理時間を最適化
+- **BackgroundCache**: WebP 画像を起動時に1回だけデコードし、`image::RgbaImage` としてキャッシュ
+- **Pixmap 直接合成**: PNG エンコード/デコードの往復を排除。`tiny_skia::Pixmap` ベースで背景タイリング → ぼかし → コード合成
+- **SVG の軽量化**: 背景画像を SVG に Base64 埋め込みしない。コードのみの軽量 SVG を resvg でラスタライズし、背景は rasterize 側で合成
+- **テクスチャ背景のタイリング**: `image::imageops::overlay` で小さなタイル画像を対象サイズまで敷き詰め
 
 ### 15. 行番号表示（将来）
 

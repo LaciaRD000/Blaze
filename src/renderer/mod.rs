@@ -19,7 +19,7 @@ pub struct RenderOptions {
     pub show_line_numbers: bool,
     /// 1行あたりの最大文字数。超過分は `…` でトリミング。None で無制限
     pub max_line_length: Option<usize>,
-    /// 背景画像ID。"default" でデフォルトグラデーション背景を使用
+    /// 背景画像ID。None で背景なし
     pub background_image: Option<String>,
 }
 
@@ -36,12 +36,20 @@ impl Default for RenderOptions {
     }
 }
 
+/// SVG サイズの定数（svg_builder と同じ値）
+const WINDOW_WIDTH: u32 = 800;
+const SHADOW_MARGIN: u32 = 32;
+const TITLE_BAR_HEIGHT: u32 = 36;
+const PADDING_Y: u32 = 16;
+const LINE_HEIGHT: u32 = 20;
+
 /// レンダリングパイプラインを統括する構造体
 /// Arc で共有し、複数リクエストで使い回す（読み取り専用、ロック不要）
 pub struct Renderer {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
     pub font_db: Arc<usvg::fontdb::Database>,
+    pub background_cache: background::BackgroundCache,
 }
 
 impl Default for Renderer {
@@ -56,11 +64,13 @@ impl Renderer {
         let theme_set = ThemeSet::load_defaults();
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
+        let background_cache = background::BackgroundCache::new();
 
         Self {
             syntax_set,
             theme_set,
             font_db: Arc::new(font_db),
+            background_cache,
         }
     }
 
@@ -80,6 +90,8 @@ impl Renderer {
     }
 
     /// コードを画像化する: highlight → SVG → PNG（オプション指定）
+    /// 背景ありの場合: SVG(コードのみ) + 背景Pixmap を rasterize 側で合成
+    /// 背景なしの場合: SVG → PNG の従来パス
     pub fn render_with_options(
         &self,
         code: &str,
@@ -89,7 +101,32 @@ impl Renderer {
     ) -> Result<Vec<u8>, BlazeError> {
         let svg =
             self.build_svg_internal(code, language, theme_name, options)?;
-        rasterize::rasterize(&svg, Arc::clone(&self.font_db))
+
+        if let Some(bg_id) = &options.background_image {
+            let (total_w, total_h) =
+                Self::estimate_svg_size(code, options);
+            let blur_margin =
+                (options.blur_radius * 3.0).ceil() as u32;
+            let img_w = total_w + blur_margin * 2;
+            let img_h = total_h + blur_margin * 2;
+
+            let bg_pixmap = background::load_background_pixmap(
+                &self.background_cache,
+                bg_id,
+                img_w,
+                img_h,
+            )?;
+
+            rasterize::rasterize_with_background(
+                &svg,
+                Arc::clone(&self.font_db),
+                bg_pixmap,
+                options.blur_radius,
+                blur_margin,
+            )
+        } else {
+            rasterize::rasterize(&svg, Arc::clone(&self.font_db))
+        }
     }
 
     /// SVG文字列のみを返す（スナップショットテスト用、デフォルトオプション）
@@ -108,6 +145,7 @@ impl Renderer {
     }
 
     /// SVG文字列のみを返す（オプション指定）
+    /// 注意: 背景画像は SVG に含まれない（rasterize 側で合成される）
     pub fn render_svg_with_options(
         &self,
         code: &str,
@@ -118,7 +156,20 @@ impl Renderer {
         self.build_svg_internal(code, language, theme_name, options)
     }
 
-    /// ハイライト → SVG生成の共通処理
+    /// SVG のピクセルサイズを推定する（svg_builder と同じ計算）
+    fn estimate_svg_size(code: &str, options: &RenderOptions) -> (u32, u32) {
+        let line_count = code.lines().count().max(1) as u32;
+        let title_bar_h = match options.title_bar_style.as_str() {
+            "macos" | "linux" | "plain" => TITLE_BAR_HEIGHT,
+            _ => 0,
+        };
+        let window_h = title_bar_h + PADDING_Y * 2 + LINE_HEIGHT * line_count;
+        let total_w = WINDOW_WIDTH + SHADOW_MARGIN * 2;
+        let total_h = window_h + SHADOW_MARGIN * 2;
+        (total_w, total_h)
+    }
+
+    /// ハイライト → SVG生成の共通処理（背景画像は含めない）
     fn build_svg_internal(
         &self,
         code: &str,
@@ -150,37 +201,11 @@ impl Renderer {
         let lines =
             highlight::highlight(code, language, &self.syntax_set, theme);
 
-        // 背景画像の生成（background_id が指定されている場合）
-        let bg_image_base64 =
-            if let Some(bg_id) = &render_options.background_image {
-                // SVG の総サイズを推定（svg_builder と同じ計算）
-                let window_width = 800u32;
-                let shadow_margin = 32u32;
-                let total_width = window_width + shadow_margin * 2;
-                let total_height =
-                    shadow_margin * 2 + 36 + 32 + 20 * lines.len() as u32;
-                // ぼかしの端フェード防止のためマージンを加算
-                let blur_margin =
-                    (render_options.blur_radius * 3.0).ceil() as u32;
-                let img_width = total_width + blur_margin * 2;
-                let img_height = total_height + blur_margin * 2;
-                let png = background::load_background(
-                    bg_id, img_width, img_height,
-                )?;
-                Some(background::resize_to_base64(
-                    &png, img_width, img_height,
-                )?)
-            } else {
-                None
-            };
-
         let svg_options = svg_builder::SvgOptions {
             bg_color: &bg_color,
             language,
             title_bar_style: &render_options.title_bar_style,
             opacity: render_options.opacity,
-            background_image: bg_image_base64.as_deref(),
-            blur_radius: render_options.blur_radius,
             max_line_length: render_options.max_line_length,
             show_line_numbers: render_options.show_line_numbers,
         };
@@ -280,7 +305,6 @@ mod tests {
     #[test]
     fn render_invalid_theme_uses_fallback() {
         let renderer = Renderer::new();
-        // 存在しないテーマでもエラーにならずフォールバックする
         let png = renderer
             .render("test", Some("rust"), "nonexistent-theme")
             .expect("フォールバックテーマでレンダリングに成功するべき");
@@ -369,54 +393,41 @@ mod tests {
     }
 
     #[test]
-    fn render_with_options_applies_background_gradient() {
+    fn render_with_background_gradient_produces_png() {
         let renderer = Renderer::new();
         let opts = RenderOptions {
             background_image: Some("gradient".to_string()),
             ..Default::default()
         };
-        let svg = renderer
-            .render_svg_with_options("test", None, "base16-ocean.dark", &opts)
-            .expect("SVG生成に成功するべき");
-        assert!(
-            svg.contains("feGaussianBlur"),
-            "背景画像ありの場合ガウスぼかしが含まれるべき"
-        );
-        assert!(
-            svg.contains("<image"),
-            "背景画像の image 要素が含まれるべき"
-        );
+        let png = renderer
+            .render_with_options("test", None, "base16-ocean.dark", &opts)
+            .expect("背景付きレンダリングに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
 
     #[test]
-    fn render_with_options_applies_background_denim() {
+    fn render_with_background_denim_produces_png() {
         let renderer = Renderer::new();
         let opts = RenderOptions {
             background_image: Some("denim".to_string()),
             ..Default::default()
         };
-        let svg = renderer
-            .render_svg_with_options("test", None, "base16-ocean.dark", &opts)
-            .expect("SVG生成に成功するべき");
-        assert!(
-            svg.contains("<image"),
-            "denim 背景の image 要素が含まれるべき"
-        );
+        let png = renderer
+            .render_with_options("test", None, "base16-ocean.dark", &opts)
+            .expect("denim背景付きレンダリングに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
 
     #[test]
-    fn render_with_options_applies_background_repeated_square_dark() {
+    fn render_with_background_repeated_square_dark_produces_png() {
         let renderer = Renderer::new();
         let opts = RenderOptions {
             background_image: Some("repeated-square-dark".to_string()),
             ..Default::default()
         };
-        let svg = renderer
-            .render_svg_with_options("test", None, "base16-ocean.dark", &opts)
-            .expect("SVG生成に成功するべき");
-        assert!(
-            svg.contains("<image"),
-            "repeated-square-dark 背景の image 要素が含まれるべき"
-        );
+        let png = renderer
+            .render_with_options("test", None, "base16-ocean.dark", &opts)
+            .expect("repeated-square-dark背景付きレンダリングに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
 }
