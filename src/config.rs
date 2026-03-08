@@ -10,6 +10,9 @@ pub struct Settings {
     pub rate_limit_per_minute: u32,
     pub max_concurrent_renders: usize,
     pub log_level: String,
+    /// Redis 接続URL（Gateway/Worker 分離時に使用）。省略時はモノリスモード
+    #[serde(default)]
+    pub redis_url: Option<String>,
 }
 
 impl Settings {
@@ -42,6 +45,9 @@ impl Settings {
         }
         if let Ok(v) = std::env::var("BLAZE_LOG_LEVEL") {
             self.log_level = v;
+        }
+        if let Ok(v) = std::env::var("REDIS_URL") {
+            self.redis_url = Some(v);
         }
     }
 

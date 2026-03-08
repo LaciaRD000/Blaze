@@ -42,6 +42,11 @@ dotenvy = "0.15"
 base64 = "0.22"
 regex = "1"
 
+# マイクロサービス間通信
+redis = { version = "0.27", features = ["tokio-comp"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
 [build-dependencies]
 # build.rs で SyntaxSet/ThemeSet をバイナリダンプするため、デフォルト構文・テーマが必要
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
