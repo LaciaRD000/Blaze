@@ -1,0 +1,45 @@
+# rustfmt 設定ファイル
+# ドキュメント: https://rust-lang.github.io/rustfmt/
+
+# ===== Stable Options =====
+
+# Edition (Cargo.toml に合わせる)
+edition = "2024"
+
+# 1行の最大文字数
+max_width = 80
+
+# インデント: 4スペース
+tab_spaces = 4
+hard_tabs = false
+
+# ===== Unstable Options (nightly rustfmt が必要) =====
+# 使うには以下のいずれかが必要:
+#   1. `rustup run nightly cargo fmt`
+#   2. rust-analyzer の設定で nightly rustfmt を指定
+#
+# 有効にしたい場合は行頭の # を外してください。
+
+# use文をクレート単位でグルーピング
+#   use std::{fmt, io};
+imports_granularity = "Crate"
+
+# use文を std → 外部crate → 自crate の順にソート
+group_imports = "StdExternalCrate"
+
+# コメントを max_width に合わせて折り返し・整形
+wrap_comments = true
+normalize_comments = true
+
+# 短い関数本体を1行にまとめることを許可
+#   fn id(&self) -> i64 { self.id }
+fn_single_line = true
+
+# 短い if/else を1行にまとめることを許可
+single_line_if_else_max_width = 50
+
+# 連続する空行を最大1行に圧縮
+blank_lines_upper_bound = 1
+
+# 末尾カンマ: 複数行のとき常に付ける (デフォルトと同じ)
+trailing_comma = "Vertical"
