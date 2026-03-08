@@ -1,0 +1,6 @@
+max_code_lines = 100
+max_code_chars = 4000
+max_line_length = 120
+rate_limit_per_minute = 10
+max_concurrent_renders = 4
+log_level = "info"
