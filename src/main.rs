@@ -16,7 +16,7 @@ use error::BlazeError;
 pub struct Data {
     pub settings: Arc<Settings>,
     pub renderer: Arc<renderer::Renderer>,
-    pub db: sqlx::SqlitePool,
+    pub db: sqlx::PgPool,
     pub render_semaphore: Arc<tokio::sync::Semaphore>,
     pub rate_limiter: Arc<governor::DefaultKeyedRateLimiter<u64>>,
 }
@@ -82,9 +82,9 @@ async fn main() {
 
     let settings = Arc::new(settings);
 
-    // データベース接続
+    // データベース接続 (Supabase PostgreSQL)
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:blaze-bot.db?mode=rwc".to_string());
+        .expect("DATABASE_URL 環境変数が設定されていません");
     let db = db::init_pool(&database_url)
         .await
         .expect("データベースの初期化に失敗");

@@ -1,5 +1,5 @@
 use crate::db::models::UserTheme;
-use crate::db::{SqliteThemeRepository, ThemeRepository};
+use crate::db::{PgThemeRepository, ThemeRepository};
 use crate::error::BlazeError;
 use crate::{Context, Error};
 
@@ -67,7 +67,7 @@ pub async fn set(
     }
 
     let user_id = ctx.author().id.get() as i64;
-    let repo = SqliteThemeRepository::new(ctx.data().db.clone());
+    let repo = PgThemeRepository::new(ctx.data().db.clone());
 
     // 既存テーマを取得、なければデフォルトで作成
     let mut theme = repo
@@ -122,7 +122,7 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
 
     let user_id = ctx.author().id.get() as i64;
-    let repo = SqliteThemeRepository::new(ctx.data().db.clone());
+    let repo = PgThemeRepository::new(ctx.data().db.clone());
 
     let theme = repo
         .get_theme(user_id as u64)
@@ -154,7 +154,7 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command)]
 pub async fn reset(ctx: Context<'_>) -> Result<(), Error> {
     let user_id = ctx.author().id.get();
-    let repo = SqliteThemeRepository::new(ctx.data().db.clone());
+    let repo = PgThemeRepository::new(ctx.data().db.clone());
 
     repo.delete_theme(user_id).await?;
 

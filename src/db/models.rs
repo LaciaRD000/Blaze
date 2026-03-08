@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 
 /// ユーザーごとのテーマ設定
@@ -12,7 +13,7 @@ pub struct UserTheme {
     pub font_size: f64,
     pub title_bar_style: String,
     pub show_line_numbers: i32,
-    pub updated_at: String,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl UserTheme {
@@ -28,7 +29,7 @@ impl UserTheme {
             font_size: 14.0,
             title_bar_style: "macos".to_string(),
             show_line_numbers: 0,
-            updated_at: String::new(),
+            updated_at: Utc::now(),
         }
     }
 }

@@ -4,7 +4,7 @@ use poise::serenity_prelude as serenity;
 use regex::Regex;
 
 use crate::db::models::UserTheme;
-use crate::db::{SqliteThemeRepository, ThemeRepository};
+use crate::db::{PgThemeRepository, ThemeRepository};
 use crate::error::BlazeError;
 use crate::sanitize::sanitize_code;
 use crate::{Context, Error};
@@ -118,7 +118,7 @@ pub async fn render_message(
     // 4. ユーザーテーマ取得（DB障害時はデフォルトにフォールバック）
     let user_id = ctx.author().id.get() as i64;
     let theme = {
-        let repo = SqliteThemeRepository::new(ctx.data().db.clone());
+        let repo = PgThemeRepository::new(ctx.data().db.clone());
         repo.get_theme(user_id as u64)
             .await
             .unwrap_or(None)
