@@ -194,6 +194,9 @@ fn load_fonts(font_db: &mut usvg::fontdb::Database) {
     font_db.load_font_data(
         include_bytes!("../../assets/fonts/PlemolJP-Regular.ttf").to_vec(),
     );
+    font_db.load_font_data(
+        include_bytes!("../../assets/fonts/HackGenConsoleNF-Regular.ttf").to_vec(),
+    );
 }
 
 #[cfg(test)]
@@ -258,6 +261,17 @@ mod tests {
                 .any(|(name, _)| name.contains("PlemolJP"))
         });
         assert!(has_plemol, "PlemolJP フォントが登録されているべき");
+    }
+
+    #[test]
+    fn font_db_contains_hackgen_nf() {
+        let renderer = Renderer::new();
+        let has_hackgen = renderer.font_db.faces().any(|face| {
+            face.families
+                .iter()
+                .any(|(name, _)| name.contains("HackGen Console NF"))
+        });
+        assert!(has_hackgen, "HackGen Console NF フォントが登録されているべき");
     }
 
     #[test]

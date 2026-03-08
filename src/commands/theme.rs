@@ -22,6 +22,8 @@ pub enum FontChoice {
     FiraCode,
     #[name = "PlemolJP"]
     PlemolJP,
+    #[name = "HackGen NF"]
+    HackGenNF,
 }
 
 /// カラースキームの選択肢（syntect デフォルトテーマ）
@@ -134,6 +136,7 @@ pub async fn set(
         theme.font_family = match f {
             FontChoice::FiraCode => "Fira Code".to_string(),
             FontChoice::PlemolJP => "PlemolJP".to_string(),
+            FontChoice::HackGenNF => "HackGen Console NF".to_string(),
         };
     }
     if let Some(sln) = show_line_numbers {
