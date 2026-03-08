@@ -1,15 +1,23 @@
 use std::sync::Arc;
 
-use crate::db::models::UserTheme;
-use crate::db::{PgThemeRepository, ThemeRepository};
-use crate::error::BlazeError;
-use crate::{Context, Error};
+use crate::{
+    Context, Error,
+    db::{PgThemeRepository, ThemeRepository, models::UserTheme},
+    error::BlazeError,
+};
+
+/// タイトルバースタイルの選択肢
+#[derive(Debug, Clone, poise::ChoiceParameter)]
+pub enum TitleBarStyle {
+    #[name = "macOS"]
+    Macos,
+    #[name = "linux"]
+    Linux,
+}
 
 /// テーマ設定を変更
 #[poise::command(slash_command, subcommands("set", "preview", "reset"))]
-pub async fn theme(_ctx: Context<'_>) -> Result<(), Error> {
-    Ok(())
-}
+pub async fn theme(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
 
 /// カラースキーム・背景・ぼかし等を設定
 // poise のスラッシュコマンドは各パラメータが引数になるため抑制
@@ -21,7 +29,7 @@ pub async fn set(
     #[description = "背景画像"] background: Option<String>,
     #[description = "ぼかし強度 (0-30)"] blur: Option<f64>,
     #[description = "不透明度 (0.3-1.0)"] opacity: Option<f64>,
-    #[description = "タイトルバー (macos/linux)"] title_bar: Option<String>,
+    #[description = "タイトルバー"] title_bar: Option<TitleBarStyle>,
     #[description = "フォント (FiraCode/PlemolJP)"] font: Option<String>,
     #[description = "行番号表示 (true/false)"] show_line_numbers: Option<bool>,
 ) -> Result<(), Error> {
@@ -39,14 +47,6 @@ pub async fn set(
         return Err(BlazeError::InvalidTheme(
             "不透明度は 0.3〜1.0 の範囲で指定してください".to_string(),
         ));
-    }
-    if let Some(ref tb) = title_bar
-        && tb != "macos"
-        && tb != "linux"
-    {
-        return Err(BlazeError::InvalidTheme(format!(
-            "タイトルバーは 'macos' または 'linux' を指定してください: {tb}"
-        )));
     }
     if let Some(ref f) = font
         && f != "Fira Code"
@@ -103,7 +103,10 @@ pub async fn set(
         theme.opacity = o;
     }
     if let Some(tb) = title_bar {
-        theme.title_bar_style = tb;
+        theme.title_bar_style = match tb {
+            TitleBarStyle::Macos => "macos".to_string(),
+            TitleBarStyle::Linux => "linux".to_string(),
+        };
     }
     if let Some(f) = font {
         theme.font_family = f;
