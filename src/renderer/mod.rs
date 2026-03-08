@@ -175,9 +175,9 @@ impl Renderer {
             bg_color: &bg_color,
             language,
             title_bar_style: &render_options.title_bar_style,
-            opacity: render_options.opacity as f32,
+            opacity: render_options.opacity,
             background_image: bg_image_base64.as_deref(),
-            blur_radius: render_options.blur_radius as f32,
+            blur_radius: render_options.blur_radius,
             max_line_length: render_options.max_line_length,
             show_line_numbers: render_options.show_line_numbers,
         };

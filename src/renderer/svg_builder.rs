@@ -3,24 +3,24 @@ use std::fmt::Write;
 use crate::renderer::highlight::HighlightedLine;
 use crate::sanitize::escape_for_svg;
 
-const FONT_SIZE: f32 = 14.0;
-const LINE_HEIGHT: f32 = 20.0;
-const PADDING_X: f32 = 16.0;
-const PADDING_Y: f32 = 16.0;
-const TITLE_BAR_HEIGHT: f32 = 36.0;
-const SHADOW_MARGIN: f32 = 32.0;
-const BORDER_RADIUS: f32 = 12.0;
+const FONT_SIZE: f64 = 14.0;
+const LINE_HEIGHT: f64 = 20.0;
+const PADDING_X: f64 = 16.0;
+const PADDING_Y: f64 = 16.0;
+const TITLE_BAR_HEIGHT: f64 = 36.0;
+const SHADOW_MARGIN: f64 = 32.0;
+const BORDER_RADIUS: f64 = 12.0;
 
 /// SVG生成オプション
 pub struct SvgOptions<'a> {
     pub bg_color: &'a str,
     pub language: Option<&'a str>,
     pub title_bar_style: &'a str,
-    pub opacity: f32,
+    pub opacity: f64,
     /// 背景画像のBase64文字列（PNG）。None の場合は背景画像なし
     pub background_image: Option<&'a str>,
     /// ガウスぼかしの強度（stdDeviation）
-    pub blur_radius: f32,
+    pub blur_radius: f64,
     /// 1行あたりの最大文字数。超過分は `…` でトリミング。None で無制限
     pub max_line_length: Option<usize>,
     /// 行番号を表示するか
@@ -43,7 +43,7 @@ impl Default for SvgOptions<'_> {
 }
 
 /// 行番号の表示幅（文字数に応じた余白）
-const LINE_NUMBER_WIDTH: f32 = 40.0;
+const LINE_NUMBER_WIDTH: f64 = 40.0;
 
 /// トークン列を max_line_length に基づいてトリミングする
 fn trim_tokens(
@@ -78,7 +78,7 @@ fn trim_tokens(
 /// ハイライト済みコード行からSVG文字列を生成する
 pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
     let window_width = 800.0;
-    let code_height = PADDING_Y * 2.0 + LINE_HEIGHT * lines.len() as f32;
+    let code_height = PADDING_Y * 2.0 + LINE_HEIGHT * lines.len() as f64;
     let title_bar_h = match options.title_bar_style {
         "macos" | "linux" => TITLE_BAR_HEIGHT,
         _ => 0.0,
@@ -150,7 +150,7 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
         PADDING_X
     };
     for (i, line) in lines.iter().enumerate() {
-        let y = title_bar_h + PADDING_Y + FONT_SIZE + LINE_HEIGHT * i as f32;
+        let y = title_bar_h + PADDING_Y + FONT_SIZE + LINE_HEIGHT * i as f64;
 
         // 行番号
         if options.show_line_numbers {
@@ -235,7 +235,7 @@ fn build_macos_title_bar(svg: &mut String, language: Option<&str>) {
 /// Linux WM 風タイトルバー（GNOME/Adwaita 風: 右上にアイコン付きボタン + 言語名）
 fn build_linux_title_bar(
     svg: &mut String,
-    window_width: f32,
+    window_width: f64,
     language: Option<&str>,
 ) {
     // 言語名テキスト（左寄せ）
@@ -248,9 +248,9 @@ fn build_linux_title_bar(
     }
 
     // 右上のボタン（最小化・最大化・閉じる）
-    let button_size: f32 = 16.0;
-    let button_spacing: f32 = 24.0;
-    let button_y: f32 = 10.0;
+    let button_size: f64 = 16.0;
+    let button_spacing: f64 = 24.0;
+    let button_y: f64 = 10.0;
     let center_y = button_y + button_size / 2.0;
     let close_x = window_width - 28.0;
     let maximize_x = close_x - button_spacing;
