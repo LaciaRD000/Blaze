@@ -104,10 +104,43 @@ pub async fn set(
     Ok(())
 }
 
+/// サンプルコードの定数
+const PREVIEW_CODE: &str = r#"fn main() {
+    let greeting = "Hello, world!";
+    println!("{greeting}");
+}"#;
+
 /// 現在のテーマでサンプルコードをプレビュー
 #[poise::command(slash_command)]
-pub async fn preview(_ctx: Context<'_>) -> Result<(), Error> {
-    // Step 4.4 で実装
+pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+
+    let user_id = ctx.author().id.get() as i64;
+    let repo = SqliteThemeRepository::new(ctx.data().db.clone());
+
+    let theme = repo
+        .get_theme(user_id as u64)
+        .await?
+        .unwrap_or_else(|| UserTheme::with_defaults(user_id));
+
+    let renderer = std::sync::Arc::clone(&ctx.data().renderer);
+    let theme_name = theme.color_scheme.clone();
+
+    let png = tokio::task::spawn_blocking(move || {
+        renderer.render(PREVIEW_CODE, Some("rust"), &theme_name)
+    })
+    .await
+    .map_err(|e| BlazeError::rendering(e.to_string()))??;
+
+    let attachment =
+        poise::serenity_prelude::CreateAttachment::bytes(png, "preview.png");
+    ctx.send(
+        poise::CreateReply::default()
+            .attachment(attachment)
+            .ephemeral(true),
+    )
+    .await?;
+
     Ok(())
 }
 
