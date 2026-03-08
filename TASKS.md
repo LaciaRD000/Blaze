@@ -21,7 +21,7 @@
 ## Phase 2: シンタックスハイライト + SVG生成 + PNG変換
 
 - [x] renderer/highlight.rs: syntect によるトークン化
-- [ ] renderer/svg_builder.rs: 最小限のSVG文字列生成（背景なし、装飾なし）
+- [x] renderer/svg_builder.rs: 最小限のSVG文字列生成（背景なし、装飾なし）
 - [ ] renderer/rasterize.rs: resvg/tiny-skia で SVG→PNG
 - [ ] renderer/mod.rs: Renderer 構造体 + パイプライン統括
 - [ ] render_message をスタブから実画像生成に接続
