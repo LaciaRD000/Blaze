@@ -1,0 +1,45 @@
+[package]
+name = "blaze-bot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Discord (serenity は poise が re-export するため直接依存しない)
+poise = "0.6"
+tokio = { version = "1", features = ["full"] }
+
+# 構文解析
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+
+# 画像生成
+resvg = "0.45"
+tiny-skia = "0.11"
+
+# データベース
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+
+# エラーハンドリング
+thiserror = "2"
+
+# レート制限
+governor = "0.8"
+
+# 設定管理
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# 入力サニタイズ
+unicode-normalization = "0.1"
+
+# ロギング・監視
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+
+# ユーティリティ
+dotenvy = "0.15"
+base64 = "0.22"
+regex = "1"
+
+[dev-dependencies]
+proptest = "1"
+insta = "1"
