@@ -56,6 +56,7 @@ The `Renderer` struct (holding `SyntaxSet`, `ThemeSet`, `fontdb::Database`) is w
 
 - 日本語でコミュニケーションする
 - 設計は `DESIGN.md`、仕様は `SPEC.md` を参照する
+- コードを変更したら、関連する `DESIGN.md` と `SPEC.md` も必ず更新すること
 - 実装は `IMPLEMENTATION.md` の手順に従い、ステップ順に進める。スキップしない
 - タスクと進捗は `TASKS.md` で管理する。タスク完了時にチェックを更新すること
 
