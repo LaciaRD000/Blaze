@@ -4,6 +4,7 @@ use poise::serenity_prelude as serenity;
 
 pub mod commands;
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod renderer;
 pub mod sanitize;
@@ -12,10 +13,11 @@ use config::Settings;
 use error::BlazeError;
 
 /// Bot の共有データ。poise Framework の `Data` 型として使用する。
-/// 後のフェーズで db, rate_limiter, render_semaphore を追加する。
+/// 後のフェーズで rate_limiter, render_semaphore を追加する。
 pub struct Data {
     pub settings: Arc<Settings>,
     pub renderer: Arc<renderer::Renderer>,
+    pub db: sqlx::SqlitePool,
 }
 
 type Error = BlazeError;
@@ -68,6 +70,13 @@ async fn main() {
     settings.validate().expect("設定値のバリデーションに失敗");
     let settings = Arc::new(settings);
 
+    // データベース接続
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite:blaze-bot.db?mode=rwc".to_string());
+    let db = db::init_pool(&database_url)
+        .await
+        .expect("データベースの初期化に失敗");
+
     let token = std::env::var("DISCORD_TOKEN")
         .expect("DISCORD_TOKEN 環境変数が設定されていません");
 
@@ -88,7 +97,11 @@ async fn main() {
                 .await?;
                 let renderer = Arc::new(renderer::Renderer::new());
                 println!("Bot が起動しました");
-                Ok(Data { settings, renderer })
+                Ok(Data {
+                    settings,
+                    renderer,
+                    db,
+                })
             })
         })
         .build();

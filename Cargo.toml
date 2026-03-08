@@ -16,7 +16,7 @@ resvg = "0.45"
 tiny-skia = "0.11"
 
 # データベース
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
 
 # エラーハンドリング
 thiserror = "2"
