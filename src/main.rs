@@ -5,6 +5,7 @@ use poise::serenity_prelude as serenity;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod renderer;
 pub mod sanitize;
 
 use config::Settings;
