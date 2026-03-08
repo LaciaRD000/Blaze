@@ -47,10 +47,10 @@
 
 ## Phase 5: 本番品質
 
-- [ ] 背景画像バリエーション + 事前リサイズ最適化
-- [ ] max_line_length による横方向トリミング
-- [ ] spawn_blocking + Semaphore による同時実行数制御
-- [ ] Settings::validate() による起動時バリデーション
+- [x] 背景画像バリエーション + 事前リサイズ最適化
+- [x] max_line_length による横方向トリミング
+- [x] spawn_blocking + Semaphore による同時実行数制御
+- [x] Settings::validate() による起動時バリデーション
 
 ## Phase 6: 堅牢性・セキュリティ
 
