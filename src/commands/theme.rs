@@ -63,15 +63,6 @@ impl ColorSchemeChoice {
     }
 }
 
-/// レンダリングスケールの選択肢
-#[derive(Debug, Clone, poise::ChoiceParameter)]
-pub enum RenderScaleChoice {
-    #[name = "1x（高速）"]
-    Scale1x,
-    #[name = "2x（高解像度）"]
-    Scale2x,
-}
-
 /// 背景画像の選択肢
 #[derive(Debug, Clone, poise::ChoiceParameter)]
 pub enum BackgroundChoice {
@@ -102,7 +93,6 @@ pub async fn set(
     #[description = "タイトルバー"] title_bar: Option<TitleBarStyle>,
     #[description = "フォント"] font: Option<FontChoice>,
     #[description = "行番号表示 (true/false)"] show_line_numbers: Option<bool>,
-    #[description = "解像度スケール"] scale: Option<RenderScaleChoice>,
 ) -> Result<(), Error> {
     // パラメータバリデーション
     if let Some(blur) = blur
@@ -163,12 +153,6 @@ pub async fn set(
     }
     if let Some(sln) = show_line_numbers {
         theme.show_line_numbers = if sln { 1 } else { 0 };
-    }
-    if let Some(s) = scale {
-        theme.render_scale = match s {
-            RenderScaleChoice::Scale1x => 1,
-            RenderScaleChoice::Scale2x => 2,
-        };
     }
 
     repo.upsert_theme(&theme).await?;
@@ -245,7 +229,6 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
         } else {
             Some(theme.background_id.clone())
         },
-        scale: theme.render_scale as f32,
     };
 
     let png = tokio::task::spawn_blocking(move || {

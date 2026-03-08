@@ -23,7 +23,6 @@ fn to_render_options(opts: &RenderJobOptions) -> RenderOptions {
         show_line_numbers: opts.show_line_numbers,
         max_line_length: opts.max_line_length,
         background_image: opts.background_image.clone(),
-        scale: opts.scale,
     }
 }
 

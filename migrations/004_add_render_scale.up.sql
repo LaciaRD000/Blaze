@@ -1,1 +1,0 @@
-ALTER TABLE user_themes ADD COLUMN render_scale INTEGER NOT NULL DEFAULT 2;

@@ -6,6 +6,9 @@ use resvg::usvg;
 
 use crate::error::BlazeError;
 
+/// レンダリングスケール（高DPI対応）
+const SCALE: f32 = 2.0;
+
 /// Pixmap を高速圧縮で PNG エンコードする
 /// Discord は画像アップロード時に再圧縮するため、Bot 側で高圧縮する CPU コストは無駄になる
 fn encode_png_fast(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError> {
@@ -32,7 +35,6 @@ fn encode_png_fast(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError> {
 pub fn rasterize(
     svg: &str,
     font_db: Arc<resvg::usvg::fontdb::Database>,
-    scale: f32,
 ) -> Result<Vec<u8>, BlazeError> {
     let options = usvg::Options {
         fontdb: font_db,
@@ -42,15 +44,15 @@ pub fn rasterize(
         .map_err(|e| BlazeError::rendering(format!("SVGパース失敗: {e}")))?;
 
     let size = tree.size();
-    let width = (size.width() * scale) as u32;
-    let height = (size.height() * scale) as u32;
+    let width = (size.width() * SCALE) as u32;
+    let height = (size.height() * SCALE) as u32;
 
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("Pixmap の作成に失敗"))?;
 
     resvg::render(
         &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
+        tiny_skia::Transform::from_scale(SCALE, SCALE),
         &mut pixmap.as_mut(),
     );
 
@@ -98,14 +100,13 @@ fn blur_pixmap(
 }
 
 /// 背景 Pixmap 付きでコード SVG をラスタライズする
-/// 背景にぼかしを適用 → スケール → コード SVG を上に合成
+/// 背景にぼかしを適用 → 2xスケール → コード SVG を上に合成
 pub fn rasterize_with_background(
     svg: &str,
     font_db: Arc<resvg::usvg::fontdb::Database>,
     bg_pixmap: tiny_skia::Pixmap,
     blur_radius: f64,
     blur_margin: u32,
-    scale: f32,
 ) -> Result<Vec<u8>, BlazeError> {
     // 1. コード SVG をラスタライズ（透明背景）
     let options = usvg::Options {
@@ -116,33 +117,33 @@ pub fn rasterize_with_background(
         .map_err(|e| BlazeError::rendering(format!("SVGパース失敗: {e}")))?;
 
     let size = tree.size();
-    let width = (size.width() * scale) as u32;
-    let height = (size.height() * scale) as u32;
+    let width = (size.width() * SCALE) as u32;
+    let height = (size.height() * SCALE) as u32;
 
     let mut code_pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("コードPixmap作成に失敗"))?;
     resvg::render(
         &tree,
-        tiny_skia::Transform::from_scale(scale, scale),
+        tiny_skia::Transform::from_scale(SCALE, SCALE),
         &mut code_pixmap.as_mut(),
     );
 
     // 2. 背景にぼかしを適用（1xサイズで処理、軽量）
     let blurred_bg = blur_pixmap(bg_pixmap, blur_radius)?;
 
-    // 3. 最終キャンバスに合成: ぼかし背景（スケール適用）→ コード
+    // 3. 最終キャンバスに合成: ぼかし背景（2xスケール）→ コード
     let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
 
-    // 背景をスケール適用で描画（blur_margin 分をオフセットして中央合わせ）
-    let offset = -(blur_margin as f32) * scale;
+    // 背景を2xスケールで描画（blur_margin 分をオフセットして中央合わせ）
+    let offset = -(blur_margin as f32) * SCALE;
     final_pixmap.draw_pixmap(
         0,
         0,
         blurred_bg.as_ref(),
         &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::from_scale(scale, scale)
-            .pre_translate(offset / scale, offset / scale),
+        tiny_skia::Transform::from_scale(SCALE, SCALE)
+            .pre_translate(offset / SCALE, offset / SCALE),
         None,
     );
 
@@ -188,7 +189,7 @@ mod tests {
     fn rasterize_valid_svg_returns_png_bytes() {
         let svg = minimal_svg();
         let db = empty_font_db();
-        let png = rasterize(&svg, db, 2.0).expect("ラスタライズに成功するべき");
+        let png = rasterize(&svg, db).expect("ラスタライズに成功するべき");
         assert!(!png.is_empty());
         // PNG マジックバイト
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
@@ -197,7 +198,7 @@ mod tests {
     #[test]
     fn rasterize_invalid_svg_returns_error() {
         let db = empty_font_db();
-        let result = rasterize("not valid svg", db, 2.0);
+        let result = rasterize("not valid svg", db);
         assert!(result.is_err());
     }
 
@@ -210,7 +211,7 @@ mod tests {
         let bg = super::super::background::generate_gradient_pixmap(224, 124)
             .expect("背景Pixmap生成に成功するべき");
 
-        let png = rasterize_with_background(&svg, db, bg, 8.0, 12, 2.0)
+        let png = rasterize_with_background(&svg, db, bg, 8.0, 12)
             .expect("背景合成ラスタライズに成功するべき");
         assert!(!png.is_empty());
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
@@ -255,34 +256,13 @@ mod tests {
     }
 
     #[test]
-    fn rasterize_1x_produces_smaller_image_than_2x() {
-        let svg = minimal_svg();
-        let db = empty_font_db();
-
-        let png_1x =
-            rasterize(&svg, Arc::clone(&db), 1.0)
-                .expect("1xラスタライズに成功するべき");
-        let png_2x =
-            rasterize(&svg, Arc::clone(&db), 2.0)
-                .expect("2xラスタライズに成功するべき");
-
-        // 2x は 1x よりピクセル数が4倍 → ファイルサイズも大きいはず
-        assert!(
-            png_2x.len() > png_1x.len(),
-            "2x PNG ({}) は 1x PNG ({}) より大きいべき",
-            png_2x.len(),
-            png_1x.len()
-        );
-    }
-
-    #[test]
     fn rasterize_with_background_not_all_transparent() {
         let svg = minimal_svg();
         let db = empty_font_db();
         let bg = super::super::background::generate_gradient_pixmap(224, 124)
             .expect("背景Pixmap生成に成功するべき");
 
-        let png = rasterize_with_background(&svg, db, bg, 8.0, 12, 2.0)
+        let png = rasterize_with_background(&svg, db, bg, 8.0, 12)
             .expect("背景合成ラスタライズに成功するべき");
         let pixmap = tiny_skia::Pixmap::decode_png(&png)
             .expect("PNGデコードに成功するべき");
