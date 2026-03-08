@@ -29,9 +29,9 @@
 
 ## Phase 3: ビジュアル完成
 
-- [ ] ガウスぼかし背景（feGaussianBlur）
-- [ ] 半透明ウィンドウ矩形（fill-opacity）
-- [~] タイトルバー（macOS風 / Linux風）
+- [x] ガウスぼかし背景（feGaussianBlur）
+- [x] 半透明ウィンドウ矩形（fill-opacity）
+- [x] タイトルバー（macOS風 / Linux風）
 - [x] 角丸 + ドロップシャドウ
 - [x] フォント埋め込み（Fira Code + PlemolJP）
 
