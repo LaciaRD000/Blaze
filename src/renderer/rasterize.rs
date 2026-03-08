@@ -1,11 +1,35 @@
 use std::sync::Arc;
 
+use image::ImageEncoder;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use resvg::usvg;
 
 use crate::error::BlazeError;
 
 /// レンダリングスケール（高DPI対応）
 const SCALE: f32 = 2.0;
+
+/// Pixmap を高速圧縮で PNG エンコードする
+/// Discord は画像アップロード時に再圧縮するため、Bot 側で高圧縮する CPU コストは無駄になる
+fn encode_png_fast(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError> {
+    let mut buf = Vec::new();
+    let encoder = PngEncoder::new_with_quality(
+        &mut buf,
+        CompressionType::Fast,
+        FilterType::Sub,
+    );
+    encoder
+        .write_image(
+            pixmap.data(),
+            pixmap.width(),
+            pixmap.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| {
+            BlazeError::rendering(format!("PNGエンコード失敗: {e}"))
+        })?;
+    Ok(buf)
+}
 
 /// SVG文字列をPNGバイト列に変換する（背景なし）
 pub fn rasterize(
@@ -32,9 +56,7 @@ pub fn rasterize(
         &mut pixmap.as_mut(),
     );
 
-    pixmap
-        .encode_png()
-        .map_err(|e| BlazeError::rendering(format!("PNGエンコード失敗: {e}")))
+    encode_png_fast(&pixmap)
 }
 
 /// tiny_skia::Pixmap (premultiplied alpha) → image::RgbaImage (straight alpha) に変換
@@ -135,9 +157,7 @@ pub fn rasterize_with_background(
         None,
     );
 
-    final_pixmap
-        .encode_png()
-        .map_err(|e| BlazeError::rendering(format!("PNGエンコード失敗: {e}")))
+    encode_png_fast(&final_pixmap)
 }
 
 #[cfg(test)]
@@ -154,6 +174,15 @@ mod tests {
 
     fn empty_font_db() -> Arc<resvg::usvg::fontdb::Database> {
         Arc::new(resvg::usvg::fontdb::Database::new())
+    }
+
+    #[test]
+    fn encode_png_fast_produces_valid_png() {
+        let pixmap = tiny_skia::Pixmap::new(100, 50)
+            .expect("Pixmap作成に成功するべき");
+        let png = encode_png_fast(&pixmap)
+            .expect("PNGエンコードに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
 
     #[test]
