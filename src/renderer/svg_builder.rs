@@ -232,7 +232,7 @@ fn build_macos_title_bar(svg: &mut String, language: Option<&str>) {
     }
 }
 
-/// Linux WM 風タイトルバー（右上に四角いボタン + 言語名）
+/// Linux WM 風タイトルバー（GNOME/Adwaita 風: 右上にアイコン付きボタン + 言語名）
 fn build_linux_title_bar(
     svg: &mut String,
     window_width: f32,
@@ -248,27 +248,70 @@ fn build_linux_title_bar(
     }
 
     // 右上のボタン（最小化・最大化・閉じる）
-    let button_size: f32 = 10.0;
-    let button_spacing: f32 = 20.0;
-    let button_y: f32 = 13.0;
-    let close_x = window_width - 24.0;
+    let button_size: f32 = 16.0;
+    let button_spacing: f32 = 24.0;
+    let button_y: f32 = 10.0;
+    let center_y = button_y + button_size / 2.0;
+    let close_x = window_width - 28.0;
     let maximize_x = close_x - button_spacing;
     let minimize_x = maximize_x - button_spacing;
 
-    // 最小化ボタン
+    let icon_color = "#cdd6f4";
+    let button_bg = "#45475a";
+    let close_bg = "#f38ba8";
+    let close_icon_color = "#1e1e2e";
+
+    // 最小化ボタン（丸背景 + 横線アイコン）
+    let min_cx = minimize_x + button_size / 2.0;
     let _ = write!(
         svg,
-        r##"<rect class="title-button" x="{minimize_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="#6c7086" rx="2"/>"##
+        r##"<rect class="title-button" x="{minimize_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="{button_bg}" rx="{r}"/>"##,
+        r = button_size / 2.0
     );
-    // 最大化ボタン
+    let line_y = center_y;
     let _ = write!(
         svg,
-        r##"<rect class="title-button" x="{maximize_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="#6c7086" rx="2"/>"##
+        r##"<line class="title-icon-minimize" x1="{x1}" y1="{line_y}" x2="{x2}" y2="{line_y}" stroke="{icon_color}" stroke-width="1.5" stroke-linecap="round"/>"##,
+        x1 = min_cx - 3.5,
+        x2 = min_cx + 3.5
     );
-    // 閉じるボタン
+
+    // 最大化ボタン（丸背景 + 四角枠アイコン）
+    let max_cx = maximize_x + button_size / 2.0;
     let _ = write!(
         svg,
-        r##"<rect class="title-button" x="{close_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="#6c7086" rx="2"/>"##
+        r##"<rect class="title-button" x="{maximize_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="{button_bg}" rx="{r}"/>"##,
+        r = button_size / 2.0
+    );
+    let _ = write!(
+        svg,
+        r##"<rect class="title-icon-maximize" x="{x}" y="{y}" width="7" height="7" fill="none" stroke="{icon_color}" stroke-width="1.5" rx="1"/>"##,
+        x = max_cx - 3.5,
+        y = center_y - 3.5
+    );
+
+    // 閉じるボタン（赤背景 + ×アイコン）
+    let close_cx = close_x + button_size / 2.0;
+    let _ = write!(
+        svg,
+        r##"<rect class="title-button-close" x="{close_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="{close_bg}" rx="{r}"/>"##,
+        r = button_size / 2.0
+    );
+    let _ = write!(
+        svg,
+        r##"<line class="title-icon-close" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{close_icon_color}" stroke-width="1.5" stroke-linecap="round"/>"##,
+        x1 = close_cx - 3.0,
+        y1 = center_y - 3.0,
+        x2 = close_cx + 3.0,
+        y2 = center_y + 3.0
+    );
+    let _ = write!(
+        svg,
+        r##"<line class="title-icon-close" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{close_icon_color}" stroke-width="1.5" stroke-linecap="round"/>"##,
+        x1 = close_cx + 3.0,
+        y1 = center_y - 3.0,
+        x2 = close_cx - 3.0,
+        y2 = center_y + 3.0
     );
 }
 
@@ -478,6 +521,44 @@ mod tests {
         assert!(
             !svg.contains("<circle"),
             "Linux風タイトルバーにはcircleがないべき"
+        );
+    }
+
+    #[test]
+    fn build_svg_linux_title_bar_has_distinct_close_button() {
+        let opts = SvgOptions {
+            title_bar_style: "linux",
+            ..default_options()
+        };
+        let svg = build_svg(&sample_lines(), &opts);
+        // 閉じるボタンは他と異なる色（赤系）で描画されるべき
+        assert!(
+            svg.contains("class=\"title-button-close\""),
+            "Linux風閉じるボタンは専用クラスを持つべき"
+        );
+    }
+
+    #[test]
+    fn build_svg_linux_title_bar_has_button_icons() {
+        let opts = SvgOptions {
+            title_bar_style: "linux",
+            ..default_options()
+        };
+        let svg = build_svg(&sample_lines(), &opts);
+        // 最小化アイコン（横線）
+        assert!(
+            svg.contains("class=\"title-icon-minimize\""),
+            "最小化アイコンが含まれるべき"
+        );
+        // 最大化アイコン（四角枠）
+        assert!(
+            svg.contains("class=\"title-icon-maximize\""),
+            "最大化アイコンが含まれるべき"
+        );
+        // 閉じるアイコン（×線）
+        assert!(
+            svg.contains("class=\"title-icon-close\""),
+            "閉じるアイコンが含まれるべき"
         );
     }
 
