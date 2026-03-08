@@ -247,6 +247,7 @@ Bot にバンドルされたフォントから選択する。
 |--------|------|------|
 | `DISCORD_TOKEN` | 必須 | Discord Bot トークン |
 | `DATABASE_URL` | 必須 | PostgreSQL 接続文字列（例: `postgresql://user:pass@host:port/db`） |
+| `REDIS_URL` | 任意 | Redis 接続文字列（例: `redis://127.0.0.1:6379`）。マイクロサービスモード時に必要 |
 
 シークレット情報は `.env` ファイルで管理し、設定ファイル（`config/default.toml`）には含めない。
 
@@ -261,9 +262,10 @@ max_line_length = 120
 rate_limit_per_minute = 10
 max_concurrent_renders = 4
 log_level = "info"
+# redis_url = "redis://127.0.0.1:6379"  # 任意。マイクロサービスモード時に設定
 ```
 
-環境変数 `BLAZE_*` で個別にオーバーライド可能（例: `BLAZE_MAX_CODE_LINES=150`）。
+環境変数 `BLAZE_*` で個別にオーバーライド可能（例: `BLAZE_MAX_CODE_LINES=150`）。`redis_url` は環境変数 `REDIS_URL` でも設定可能。
 
 ---
 
@@ -271,8 +273,10 @@ log_level = "info"
 
 ### 12.1 パフォーマンス
 
+- **syntect packdump**: `build.rs` がビルド時に SyntaxSet/ThemeSet を非圧縮 packdump としてダンプし、ランタイムでは `from_uncompressed_data()` で即座にロードする。起動時の解凍処理を省略し、コールドスタートを高速化する
 - レンダリング処理はCPUバウンドのため、`tokio::task::spawn_blocking` で非同期ランタイムをブロックしない
 - レンダリングの同時実行数を `max_concurrent_renders`（デフォルト: 4）で制限し、CPU飽和を防止する
+- **マイクロサービスによる水平スケーリング**: Gateway/Worker 分離構成では、複数の Worker プロセスを起動してレンダリング処理を分散できる。Redis リストベースのキューにより、ジョブは自動的に空いている Worker に分配される
 - WebP 背景画像は起動時に1回だけデコードし `BackgroundCache` にキャッシュ。リクエストごとの再デコードを排除
 - 背景画像は SVG に Base64 埋め込みせず、Pixmap として直接合成。SVG パースの高速化とメモリ消費の削減を実現
 - テクスチャ背景（denim, repeated-square-dark）は `image::imageops::overlay` でタイリング
@@ -298,22 +302,64 @@ log_level = "info"
 
 ---
 
-## 13. 技術スタック
+## 13. デプロイモード
+
+### 13.1 モノリスモード（デフォルト）
+
+従来の単一プロセス構成。`src/main.rs` がエントリポイントとなり、Discord I/O とレンダリング処理を同一プロセス内で実行する。
+
+- `REDIS_URL` が未設定の場合、自動的にこのモードで動作する
+- 小〜中規模の利用に適する
+- 起動コマンド: `cargo run` または `./blaze-bot`
+
+### 13.2 マイクロサービスモード
+
+Gateway（Discord I/O）と Worker（レンダリング）を別プロセスに分離する構成。Redis リストベースのキューで通信する。
+
+- `REDIS_URL` の設定が必須
+- Gateway: Discord コマンド処理、レート制限、入力バリデーション、DB クエリを担当
+- Worker: CPUバウンドなレンダリング処理を担当。1プロセス1ジョブの同期処理で、並行処理は複数プロセス起動で実現
+- 複数の Worker を起動して水平スケーリングが可能
+- 起動コマンド:
+  ```bash
+  # Gateway（1プロセス）
+  cargo run --bin blaze-gateway
+
+  # Worker（必要に応じて複数起動）
+  cargo run --bin blaze-worker
+  ```
+
+### 13.3 Redis キュー仕様
+
+| 項目 | 値 |
+|------|-----|
+| ジョブキュー | Redis リスト `blaze:jobs` |
+| 結果キュー | Redis リスト `blaze:results:{job_id}`（ジョブごとに個別） |
+| 結果 TTL | 60秒（結果取得後またはタイムアウトで自動削除） |
+| プロトコル | JSON（serde_json でシリアライズ/デシリアライズ） |
+| ジョブ ID | UUID v4 |
+
+---
+
+## 14. 技術スタック
 
 | カテゴリ | 技術 |
 |---------|------|
 | 言語 | Rust (Edition 2024, nightly toolchain) |
 | Discord API | poise (serenity を re-export) |
-| 構文解析 | syntect |
+| 構文解析 | syntect（ランタイムは packdump ロード、ビルド時に dump 生成） |
 | 画像生成 | resvg / tiny-skia（SVG → PNG）、image（WebP デコード・タイリング） |
 | データベース | PostgreSQL / Supabase (sqlx) |
+| メッセージキュー | Redis (redis クレート、tokio-comp)（マイクロサービスモード時） |
+| シリアライズ | serde / serde_json（プロトコル JSON） |
+| ID 生成 | uuid v4（ジョブ ID） |
 | エラーハンドリング | thiserror |
 | レート制限 | governor |
 | ロギング | tracing / tracing-subscriber |
 
 ---
 
-## 14. 用語集
+## 15. 用語集
 
 | 用語 | 定義 |
 |------|------|

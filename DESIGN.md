@@ -21,8 +21,13 @@ blaze-bot/
 ├── assets/
 │   ├── fonts/                    # 埋め込みフォント (FiraCode, PlemolJP, HackGen NF)
 │   └── backgrounds/              # 背景画像 (denim.webp, repeated-square-dark.webp)
+├── build.rs                      # ビルド時に syntect の SyntaxSet/ThemeSet を packdump 生成
 ├── src/
-│   ├── main.rs                   # エントリポイント、Bot起動
+│   ├── main.rs                   # エントリポイント、Bot起動（モノリスモード）
+│   ├── bin/
+│   │   ├── gateway.rs            # Gateway バイナリ（Discord I/O + Redis キュー）
+│   │   └── worker.rs             # Worker バイナリ（レンダリング処理）
+│   ├── protocol.rs               # マイクロサービス間通信の型定義 (RenderJob, RenderResult)
 │   ├── config.rs                 # 設定管理 (Settings構造体、バリデーション)
 │   ├── error.rs                  # BlazeError 独自エラー型 (thiserror)
 │   ├── sanitize.rs               # 入力サニタイズ・SVGエスケープ
@@ -81,6 +86,85 @@ blaze-bot/
   → Discord に通常メッセージとしてリプライ (画像添付、全員に表示)
   → メトリクス記録 (レンダリング回数、処理時間)
 ```
+
+---
+
+## マイクロサービスアーキテクチャ（Gateway/Worker 分離）
+
+モノリス（`src/main.rs`）に加え、Gateway/Worker に分離したマイクロサービス構成をサポートする。モノリスは後方互換性のために維持される。
+
+### デプロイモード
+
+| モード | バイナリ | 説明 |
+|--------|---------|------|
+| モノリス | `blaze-bot`（デフォルト） | 従来の単一プロセス。`REDIS_URL` 未設定時はこのモードで動作 |
+| マイクロサービス | `blaze-gateway` + `blaze-worker` | Discord I/O とレンダリングを分離。水平スケーリング対応 |
+
+### マイクロサービス データフロー
+
+```
+ユーザー右クリック
+  → [Discord Gateway]
+  → blaze-gateway (src/bin/gateway.rs)
+      - poise コマンドハンドラ
+      - レート制限チェック (governor)
+      - 入力バリデーション・サニタイズ
+      - DB クエリ（ユーザーテーマ取得）
+      - RenderJob を JSON シリアライズ
+      - LPUSH → Redis リスト `blaze:jobs`
+      - BRPOP ← Redis リスト `blaze:results:{job_id}` で結果を待機
+      - PNG を Discord にリプライ送信
+
+  → Redis キュー (`blaze:jobs`)
+
+  → blaze-worker (src/bin/worker.rs)
+      - BRPOP ← Redis リスト `blaze:jobs` でジョブを取得
+      - spawn_blocking で CPU バウンドなレンダリングを実行
+      - 1プロセス1ジョブの同期処理（並行処理は Worker の複数起動で実現）
+      - RenderResult を JSON シリアライズ
+      - LPUSH → Redis リスト `blaze:results:{job_id}`（TTL 60秒）
+```
+
+### プロトコル型 (src/protocol.rs)
+
+```rust
+/// Gateway → Worker: レンダリングジョブ
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderJob {
+    pub job_id: String,          // UUID v4
+    pub code: String,
+    pub language: Option<String>,
+    pub theme_name: String,      // syntect テーマ名
+    pub options: RenderJobOptions,
+}
+
+/// レンダリングオプション（RenderOptions の Serialize 対応版）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderJobOptions {
+    pub title_bar_style: String,
+    pub opacity: f64,
+    pub blur_radius: f64,
+    pub show_line_numbers: bool,
+    pub max_line_length: Option<usize>,
+    pub background_image: Option<String>,
+}
+
+/// Worker → Gateway: レンダリング結果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RenderResult {
+    /// レンダリング成功。PNG バイト列を含む
+    Success { png_bytes: Vec<u8> },
+    /// レンダリング失敗。エラーメッセージを含む
+    Error { message: String },
+}
+```
+
+### スケーリング
+
+- 各 Worker は1プロセスあたり1ジョブずつ同期的に処理する（セマフォや内部並行処理は不要）
+- 複数の Worker プロセスを起動することで水平スケーリングが可能
+- Redis リストの BRPOP により、ジョブは自動的に空いている Worker に分配される
+- Gateway は Discord I/O に専念し、CPUバウンドなレンダリング処理を Worker に委譲する
 
 ---
 
@@ -274,8 +358,13 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new() -> Self {
-        let syntax_set = SyntaxSet::load_defaults_newlines();
-        let theme_set = ThemeSet::load_defaults();
+        // build.rs が生成した非圧縮 packdump からロード（起動時の解凍処理を省略）
+        let syntax_set: SyntaxSet = syntect::dumps::from_uncompressed_data(
+            include_bytes!(concat!(env!("OUT_DIR"), "/syntax_set.packdump"))
+        ).expect("SyntaxSet packdump の読み込みに失敗");
+        let theme_set: ThemeSet = syntect::dumps::from_uncompressed_data(
+            include_bytes!(concat!(env!("OUT_DIR"), "/theme_set.packdump"))
+        ).expect("ThemeSet packdump の読み込みに失敗");
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
         let background_cache = BackgroundCache::new(); // 起動時に1回だけ WebP デコード
@@ -584,8 +673,8 @@ CREATE TABLE IF NOT EXISTS user_themes (
 poise = "0.6"
 tokio = { version = "1", features = ["full"] }
 
-# 構文解析
-syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+# 構文解析（ランタイム: packdump からロードするため default-syntaxes/default-themes 不要）
+syntect = { version = "5", default-features = false, features = ["parsing", "dump-load", "regex-onig"] }
 
 # 画像生成
 resvg = "0.45"
@@ -612,10 +701,19 @@ unicode-normalization = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json"] }
 
+# マイクロサービス間通信
+redis = { version = "0.27", features = ["tokio-comp"] }  # Redis キュー (Gateway/Worker 分離時)
+serde_json = "1"                                          # プロトコル JSON シリアライズ
+uuid = { version = "1", features = ["v4"] }               # ジョブ ID 生成
+
 # ユーティリティ
 dotenvy = "0.15"
 base64 = "0.22"
 regex = "1"
+
+[build-dependencies]
+# ビルド時に SyntaxSet/ThemeSet の packdump を生成
+syntect = { version = "5", features = ["default-syntaxes", "default-themes", "dump-create", "dump-load", "regex-onig"] }
 
 [dev-dependencies]
 insta = "1"            # スナップショットテスト
@@ -642,7 +740,9 @@ insta = "1"            # スナップショットテスト
 
 ## 設計上のポイント
 
-- **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけロードし、全リクエストで再利用。読み取り専用のためロック不要
+- **syntect Binary Dump (`build.rs`)**: `build.rs` がビルド時に `SyntaxSet::load_defaults_newlines()` / `ThemeSet::load_defaults()` を実行し、非圧縮 packdump ファイルを `OUT_DIR` に生成する。ランタイムでは `syntect::dumps::from_uncompressed_data()` で読み込むことで、起動時の解凍処理を省略する。将来的には `build.rs` 内で不要な言語定義をフィルタリングし、バイナリサイズを削減する基盤となる
+- **Gateway/Worker 分離**: Discord I/O（Gateway）と CPUバウンドなレンダリング（Worker）を別プロセスに分離するマイクロサービス構成をサポートする。Redis リストベースのキューで通信し、Worker の水平スケーリングが可能。モノリスモードも後方互換として維持する
+- **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGは文字列として動的生成**: テンプレートエンジン不要。`format!` / `write!` で組み立てるのが最もシンプルかつ高速
 - **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード SVG の Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
