@@ -43,7 +43,7 @@ impl BackgroundCache {
 }
 
 /// image::RgbaImage (straight alpha) を tiny_skia::Pixmap (premultiplied alpha) に変換
-fn rgba_to_pixmap(
+pub(crate) fn rgba_to_pixmap(
     img: &image::RgbaImage,
 ) -> Result<tiny_skia::Pixmap, BlazeError> {
     let w = img.width();

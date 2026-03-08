@@ -134,7 +134,6 @@ dependencies = [
 name = "blaze-bot"
 version = "0.1.0"
 dependencies = [
- "base64",
  "chrono",
  "dotenvy",
  "governor",

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use base64::Engine;
 use resvg::usvg;
 
 use crate::error::BlazeError;
@@ -38,8 +37,28 @@ pub fn rasterize(
         .map_err(|e| BlazeError::rendering(format!("PNGエンコード失敗: {e}")))
 }
 
-/// 背景 Pixmap にぼかしを適用する
-/// 小さなぼかし専用 SVG を生成し resvg で処理する
+/// tiny_skia::Pixmap (premultiplied alpha) → image::RgbaImage (straight alpha) に変換
+fn pixmap_to_rgba(pixmap: &tiny_skia::Pixmap) -> image::RgbaImage {
+    let w = pixmap.width();
+    let h = pixmap.height();
+    let src = pixmap.data();
+    let mut buf = vec![0u8; src.len()];
+    for i in (0..src.len()).step_by(4) {
+        let a = src[i + 3];
+        if a == 0 {
+            continue;
+        }
+        let inv_alpha = 255.0 / a as f32;
+        buf[i] = (src[i] as f32 * inv_alpha).min(255.0) as u8;
+        buf[i + 1] = (src[i + 1] as f32 * inv_alpha).min(255.0) as u8;
+        buf[i + 2] = (src[i + 2] as f32 * inv_alpha).min(255.0) as u8;
+        buf[i + 3] = a;
+    }
+    image::RgbaImage::from_raw(w, h, buf).expect("RgbaImage 変換に失敗")
+}
+
+/// 背景 Pixmap にガウスぼかしを適用する
+/// image クレートの直接ピクセル操作で処理（SVG 経由の往復を排除）
 fn blur_pixmap(
     bg: tiny_skia::Pixmap,
     blur_radius: f64,
@@ -48,30 +67,14 @@ fn blur_pixmap(
         return Ok(bg);
     }
 
-    let w = bg.width();
-    let h = bg.height();
-    let png = bg
-        .encode_png()
-        .map_err(|e| BlazeError::rendering(format!("背景PNGエンコード失敗: {e}")))?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    // Premultiplied → Straight alpha
+    let rgba = pixmap_to_rgba(&bg);
 
-    let blur_svg = format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><defs><filter id="b"><feGaussianBlur stdDeviation="{blur_radius}"/></filter></defs><image href="data:image/png;base64,{b64}" width="{w}" height="{h}" filter="url(#b)"/></svg>"##
-    );
+    // ガウスぼかし適用
+    let blurred = image::imageops::blur(&rgba, blur_radius as f32);
 
-    let options = usvg::Options::default();
-    let tree = usvg::Tree::from_str(&blur_svg, &options)
-        .map_err(|e| BlazeError::rendering(format!("ぼかしSVGパース失敗: {e}")))?;
-
-    let mut blurred = tiny_skia::Pixmap::new(w, h)
-        .ok_or_else(|| BlazeError::rendering("ぼかしPixmap作成に失敗"))?;
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::identity(),
-        &mut blurred.as_mut(),
-    );
-
-    Ok(blurred)
+    // Straight → Premultiplied alpha
+    super::background::rgba_to_pixmap(&blurred)
 }
 
 /// 背景 Pixmap 付きでコード SVG をラスタライズする
@@ -183,6 +186,44 @@ mod tests {
             .expect("背景合成ラスタライズに成功するべき");
         assert!(!png.is_empty());
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn blur_pixmap_modifies_image() {
+        let bg = super::super::background::generate_gradient_pixmap(100, 100)
+            .expect("背景Pixmap生成に成功するべき");
+        let original_data = bg.data().to_vec();
+        let blurred =
+            blur_pixmap(bg, 8.0).expect("ぼかしに成功するべき");
+        assert_ne!(
+            original_data,
+            blurred.data(),
+            "ぼかし後のピクセルデータは元と異なるべき"
+        );
+    }
+
+    #[test]
+    fn blur_pixmap_zero_radius_returns_unchanged() {
+        let bg = super::super::background::generate_gradient_pixmap(100, 100)
+            .expect("背景Pixmap生成に成功するべき");
+        let original_data = bg.data().to_vec();
+        let result =
+            blur_pixmap(bg, 0.0).expect("ぼかしに成功するべき");
+        assert_eq!(
+            original_data,
+            result.data(),
+            "ぼかし強度0はピクセルデータを変更しないべき"
+        );
+    }
+
+    #[test]
+    fn blur_pixmap_preserves_dimensions() {
+        let bg = super::super::background::generate_gradient_pixmap(200, 150)
+            .expect("背景Pixmap生成に成功するべき");
+        let blurred =
+            blur_pixmap(bg, 5.0).expect("ぼかしに成功するべき");
+        assert_eq!(blurred.width(), 200);
+        assert_eq!(blurred.height(), 150);
     }
 
     #[test]
