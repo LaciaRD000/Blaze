@@ -147,7 +147,6 @@ pub struct RenderJobOptions {
     pub show_line_numbers: bool,
     pub max_line_length: Option<usize>,
     pub background_image: Option<String>,
-    pub scale: f32,
 }
 
 /// Worker → Gateway: レンダリング結果
@@ -344,7 +343,6 @@ pub struct UserTheme {
     pub font_size: f32,         // フォントサイズ (pt)
     pub title_bar_style: String,    // "macos" | "linux"
     pub show_line_numbers: bool,    // 行番号表示 (Phase 8 で実装、スキーマは先行準備)
-    pub render_scale: i32,          // 1 = 等倍、2 = 高解像度
 }
 ```
 
@@ -572,7 +570,6 @@ pub async fn set(
     #[description = "タイトルバー"] title_bar: Option<TitleBarStyle>,
     #[description = "フォント"] font: Option<FontChoice>,
     #[description = "行番号表示 (true/false)"] show_line_numbers: Option<bool>,
-    #[description = "解像度スケール"] scale: Option<RenderScaleChoice>,
 ) -> Result<(), Error> { /* DB更新 */ }
 
 /// 現在のテーマでサンプルコードをプレビュー
@@ -639,7 +636,6 @@ CREATE TABLE IF NOT EXISTS user_themes (
     font_size       DOUBLE PRECISION NOT NULL DEFAULT 14.0,
     title_bar_style     TEXT NOT NULL DEFAULT 'macos',
     show_line_numbers   BOOLEAN NOT NULL DEFAULT FALSE,  -- Phase 8 で実装、スキーマは先行準備
-    render_scale        INTEGER NOT NULL DEFAULT 2,     -- 1 = 等倍（高速）、2 = 高解像度（デフォルト）
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
@@ -712,6 +708,7 @@ uuid = { version = "1", features = ["v4"] }               # ジョブ ID 生成
 
 # ユーティリティ
 dotenvy = "0.15"
+base64 = "0.22"
 regex = "1"
 
 [build-dependencies]
@@ -748,9 +745,6 @@ insta = "1"            # スナップショットテスト
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGは文字列として動的生成**: テンプレートエンジン不要。`format!` / `write!` で組み立てるのが最もシンプルかつ高速
 - **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード SVG の Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
-- **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
-- **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `CompressionType::Fast` + `FilterType::Sub` で高速にエンコードし、CPU コストを削減する
-- **レンダリングスケールのオプション化**: デフォルトは 2x（高DPI対応）だが、`/theme set scale` で 1x（高速）に変更可能。1x ではピクセル数が 1/4 になり処理が高速化する
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
 - **コードブロック抽出は正規表現**: `` ```(\w*)\n([\s\S]*?)``` `` で言語タグとコード本体を分離
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する

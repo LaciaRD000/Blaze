@@ -80,7 +80,6 @@ Rust, Python, Go, JavaScript, TypeScript, C, C++, Java, Ruby, PHP, Shell, SQL, H
 | `title_bar` | ドロップダウン選択（任意） | タイトルバースタイル（macOS / Linux） | `macos` |
 | `font` | ドロップダウン選択（任意） | フォント名（Fira Code / PlemolJP） | `Fira Code` |
 | `show_line_numbers` | 真偽値（任意） | 行番号を表示するか | `false` |
-| `scale` | ドロップダウン選択（任意） | レンダリング解像度（1x（高速） / 2x（高解像度）） | `2x` |
 
 - すべてのパラメータは任意。指定したものだけが更新される
 - 未設定のユーザーにはデフォルト値が適用される
@@ -209,7 +208,6 @@ Bot にバンドルされたフォントから選択する。
 | `font_size` | DOUBLE PRECISION | フォントサイズ (pt) |
 | `title_bar_style` | TEXT | タイトルバースタイル |
 | `show_line_numbers` | BOOLEAN | 行番号表示 |
-| `render_scale` | INTEGER | レンダリングスケール（1 or 2） |
 | `updated_at` | TIMESTAMPTZ | 最終更新日時 |
 
 ### 7.2 データ喪失時の挙動
@@ -282,9 +280,7 @@ log_level = "info"
 - WebP 背景画像は起動時に1回だけデコードし `BackgroundCache` にキャッシュ。リクエストごとの再デコードを排除
 - 背景画像は SVG に Base64 埋め込みせず、Pixmap として直接合成。SVG パースの高速化とメモリ消費の削減を実現
 - テクスチャ背景（denim, repeated-square-dark）は `image::imageops::overlay` でタイリング
-- SVG → PNG ラスタライズ時のスケールはユーザー設定で 1x / 2x を選択可能。デフォルトは 2x（高DPI対応）。1x 選択時はピクセル数が 1/4 になり処理が約4倍高速化する
-- 背景ぼかしは `image::imageops::blur` による直接ピクセル操作で処理（SVG 経由の往復を排除し高速化）
-- PNG エンコードは `CompressionType::Fast` で高速に出力（Discord 側の再圧縮を考慮）
+- SVG → PNG ラスタライズ時に 2x スケールを適用し、Discord の高DPI表示でもシャープに表示される高解像度画像を生成する
 
 ### 12.2 セキュリティ
 
