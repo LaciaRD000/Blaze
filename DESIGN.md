@@ -75,6 +75,7 @@ blaze-bot/
       - フォント: font-family="Fira Code", "PlemolJP", sans-serif
   → PNG ラスタライズ (renderer/rasterize.rs)
       - resvg::render() → tiny_skia::Pixmap → PNG bytes
+      - 2x スケールで高解像度レンダリング（Discord の高DPI表示に対応）
   → Discord に通常メッセージとしてリプライ (画像添付、全員に表示)
   → メトリクス記録 (レンダリング回数、処理時間)
 ```
@@ -455,15 +456,17 @@ async fn on_error(error: poise::FrameworkError<'_, Data, BlazeError>) {
 pub async fn theme(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
 
 /// カラースキーム・背景・ぼかし等を設定
+/// 文字列パラメータは poise::ChoiceParameter による Discord ドロップダウン選択肢で受け付ける
 #[poise::command(slash_command)]
 pub async fn set(
     ctx: Context<'_>,
-    #[description = "カラースキーム"] color_scheme: Option<String>,
-    #[description = "背景画像"] background: Option<String>,
-    #[description = "ぼかし強度 (0-30)"] blur: Option<f32>,
-    #[description = "不透明度 (0.3-1.0)"] opacity: Option<f32>,
-    #[description = "フォント"] font: Option<String>,
-    #[description = "タイトルバー (macos/linux)"] title_bar: Option<String>,
+    #[description = "カラースキーム"] color_scheme: Option<ColorSchemeChoice>,
+    #[description = "背景画像"] background: Option<BackgroundChoice>,
+    #[description = "ぼかし強度 (0-30)"] blur: Option<f64>,
+    #[description = "不透明度 (0.3-1.0)"] opacity: Option<f64>,
+    #[description = "タイトルバー"] title_bar: Option<TitleBarStyle>,
+    #[description = "フォント"] font: Option<FontChoice>,
+    #[description = "行番号表示 (true/false)"] show_line_numbers: Option<bool>,
 ) -> Result<(), Error> { /* DB更新 */ }
 
 /// 現在のテーマでサンプルコードをプレビュー
@@ -611,7 +614,6 @@ base64 = "0.22"
 regex = "1"
 
 [dev-dependencies]
-proptest = "1"
 insta = "1"            # スナップショットテスト
 ```
 

@@ -73,15 +73,17 @@ Rust, Python, Go, JavaScript, TypeScript, C, C++, Java, Ruby, PHP, Shell, SQL, H
 
 | パラメータ | 型 | 説明 | デフォルト値 |
 |-----------|-----|------|------------|
-| `color_scheme` | 文字列（任意） | カラースキーム名 | `base16-ocean.dark` |
-| `background` | 文字列（任意） | 背景画像の識別子 | `default` |
+| `color_scheme` | ドロップダウン選択（任意） | カラースキーム名 | `base16-ocean.dark` |
+| `background` | ドロップダウン選択（任意） | 背景画像（なし / グラデーション） | `default`（なし） |
 | `blur` | 小数（任意） | ガウスぼかしの強度 | `8.0` |
 | `opacity` | 小数（任意） | ウィンドウの不透明度 | `0.75` |
-| `font` | 文字列（任意） | フォント名 | `Fira Code` |
-| `title_bar` | 文字列（任意） | タイトルバースタイル | `macos` |
+| `title_bar` | ドロップダウン選択（任意） | タイトルバースタイル（macOS / Linux） | `macos` |
+| `font` | ドロップダウン選択（任意） | フォント名（Fira Code / PlemolJP） | `Fira Code` |
+| `show_line_numbers` | 真偽値（任意） | 行番号を表示するか | `false` |
 
 - すべてのパラメータは任意。指定したものだけが更新される
 - 未設定のユーザーにはデフォルト値が適用される
+- 文字列パラメータは `poise::ChoiceParameter` による Discord ドロップダウンで選択する（自由入力不可）
 
 #### 3.2.2 `/theme preview` — テーマプレビュー
 
@@ -103,6 +105,8 @@ syntect が内蔵するテーマから選択する。
 |---------|------|
 | `base16-ocean.dark` | 落ち着いたダークテーマ（デフォルト） |
 | `base16-eighties.dark` | 80年代風ダークテーマ |
+| `base16-mocha.dark` | Mocha ダークテーマ |
+| `base16-ocean.light` | Ocean ライトテーマ |
 | `InspiredGitHub` | GitHub風ライトテーマ |
 | `Solarized (dark)` | Solarized ダーク |
 | `Solarized (light)` | Solarized ライト |
@@ -111,8 +115,8 @@ syntect が内蔵するテーマから選択する。
 
 | 識別子 | 説明 |
 |-------|------|
-| `default` | デフォルト背景画像 |
-| その他 | `assets/backgrounds/` に配置された画像ファイル名に対応 |
+| `default`（なし） | 背景画像なし（ウィンドウのみ） |
+| `gradient`（グラデーション） | 暗い紫〜青のグラデーション背景 + ガウスぼかし |
 
 #### ぼかし強度（`blur`）
 
@@ -265,6 +269,7 @@ log_level = "info"
 - レンダリング処理はCPUバウンドのため、`tokio::task::spawn_blocking` で非同期ランタイムをブロックしない
 - レンダリングの同時実行数を `max_concurrent_renders`（デフォルト: 4）で制限し、CPU飽和を防止する
 - 背景画像は出力解像度に合わせて事前リサイズし、メモリ消費を抑制する
+- SVG → PNG ラスタライズ時に 2x スケールを適用し、Discord の高DPI表示でもシャープに表示される高解像度画像を生成する
 
 ### 12.2 セキュリティ
 
