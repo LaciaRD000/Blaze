@@ -24,6 +24,48 @@ pub enum FontChoice {
     PlemolJP,
 }
 
+/// カラースキームの選択肢（syntect デフォルトテーマ）
+#[derive(Debug, Clone, poise::ChoiceParameter)]
+pub enum ColorSchemeChoice {
+    #[name = "base16-ocean.dark"]
+    Base16OceanDark,
+    #[name = "base16-eighties.dark"]
+    Base16EightiesDark,
+    #[name = "base16-mocha.dark"]
+    Base16MochaDark,
+    #[name = "base16-ocean.light"]
+    Base16OceanLight,
+    #[name = "InspiredGitHub"]
+    InspiredGitHub,
+    #[name = "Solarized (dark)"]
+    SolarizedDark,
+    #[name = "Solarized (light)"]
+    SolarizedLight,
+}
+
+impl ColorSchemeChoice {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Base16OceanDark => "base16-ocean.dark",
+            Self::Base16EightiesDark => "base16-eighties.dark",
+            Self::Base16MochaDark => "base16-mocha.dark",
+            Self::Base16OceanLight => "base16-ocean.light",
+            Self::InspiredGitHub => "InspiredGitHub",
+            Self::SolarizedDark => "Solarized (dark)",
+            Self::SolarizedLight => "Solarized (light)",
+        }
+    }
+}
+
+/// 背景画像の選択肢
+#[derive(Debug, Clone, poise::ChoiceParameter)]
+pub enum BackgroundChoice {
+    #[name = "なし"]
+    Default,
+    #[name = "グラデーション"]
+    Gradient,
+}
+
 /// テーマ設定を変更
 #[poise::command(slash_command, subcommands("set", "preview", "reset"))]
 pub async fn theme(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
@@ -34,8 +76,8 @@ pub async fn theme(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
 #[poise::command(slash_command)]
 pub async fn set(
     ctx: Context<'_>,
-    #[description = "カラースキーム"] color_scheme: Option<String>,
-    #[description = "背景画像"] background: Option<String>,
+    #[description = "カラースキーム"] color_scheme: Option<ColorSchemeChoice>,
+    #[description = "背景画像"] background: Option<BackgroundChoice>,
     #[description = "ぼかし強度 (0-30)"] blur: Option<f64>,
     #[description = "不透明度 (0.3-1.0)"] opacity: Option<f64>,
     #[description = "タイトルバー"] title_bar: Option<TitleBarStyle>,
@@ -57,30 +99,6 @@ pub async fn set(
             "不透明度は 0.3〜1.0 の範囲で指定してください".to_string(),
         ));
     }
-    if let Some(ref cs) = color_scheme {
-        // syntect のテーマに存在するか確認
-        if !ctx
-            .data()
-            .renderer
-            .theme_set
-            .themes
-            .contains_key(cs.as_str())
-        {
-            let available: Vec<&str> = ctx
-                .data()
-                .renderer
-                .theme_set
-                .themes
-                .keys()
-                .map(|s| s.as_str())
-                .collect();
-            return Err(BlazeError::InvalidTheme(format!(
-                "不明なカラースキーム: {cs}。利用可能: {}",
-                available.join(", ")
-            )));
-        }
-    }
-
     let user_id = ctx.author().id.get() as i64;
     let repo = PgThemeRepository::new(ctx.data().db.clone());
 
@@ -92,10 +110,13 @@ pub async fn set(
 
     // 指定されたフィールドのみ更新
     if let Some(cs) = color_scheme {
-        theme.color_scheme = cs;
+        theme.color_scheme = cs.as_str().to_string();
     }
     if let Some(bg) = background {
-        theme.background_id = bg;
+        theme.background_id = match bg {
+            BackgroundChoice::Default => "default".to_string(),
+            BackgroundChoice::Gradient => "gradient".to_string(),
+        };
     }
     if let Some(b) = blur {
         theme.blur_radius = b;
