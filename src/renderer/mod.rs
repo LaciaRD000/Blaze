@@ -6,6 +6,7 @@ use syntect::parsing::SyntaxSet;
 
 use crate::error::BlazeError;
 
+pub mod background;
 pub mod highlight;
 pub mod rasterize;
 pub mod svg_builder;
