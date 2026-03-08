@@ -41,6 +41,7 @@ Discord 上のコードブロックを、SwayFX/Wezterm 風のターミナルウ
 | `title_bar` | macOS / linux / plain / none | macOS |
 | `font` | Fira Code / PlemolJP / HackGen NF | Fira Code |
 | `show_line_numbers` | true / false | false |
+| `scale` | 1x（高速） / 2x（高解像度） | 2x |
 
 ## セットアップ
 
