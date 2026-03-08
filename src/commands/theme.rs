@@ -13,6 +13,8 @@ pub enum TitleBarStyle {
     Macos,
     #[name = "linux"]
     Linux,
+    #[name = "none"]
+    None,
 }
 
 /// フォントの選択肢
@@ -130,6 +132,7 @@ pub async fn set(
         theme.title_bar_style = match tb {
             TitleBarStyle::Macos => "macos".to_string(),
             TitleBarStyle::Linux => "linux".to_string(),
+            TitleBarStyle::None => "none".to_string(),
         };
     }
     if let Some(f) = font {
