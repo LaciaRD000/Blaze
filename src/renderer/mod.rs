@@ -95,6 +95,8 @@ impl Renderer {
             language,
             title_bar_style: "macos",
             opacity: 0.75,
+            background_image: None,
+            blur_radius: 8.0,
         };
 
         Ok(svg_builder::build_svg(&lines, &options))
