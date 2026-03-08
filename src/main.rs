@@ -2,27 +2,9 @@ use std::sync::Arc;
 
 use poise::serenity_prelude as serenity;
 
-pub mod commands;
-pub mod config;
-pub mod db;
-pub mod error;
-pub mod renderer;
-pub mod sanitize;
-
-use config::Settings;
-use error::BlazeError;
-
-/// Bot の共有データ。poise Framework の `Data` 型として使用する。
-pub struct Data {
-    pub settings: Arc<Settings>,
-    pub renderer: Arc<renderer::Renderer>,
-    pub db: sqlx::PgPool,
-    pub render_semaphore: Arc<tokio::sync::Semaphore>,
-    pub rate_limiter: Arc<governor::DefaultKeyedRateLimiter<u64>>,
-}
-
-type Error = BlazeError;
-type Context<'a> = poise::Context<'a, Data, Error>;
+use blaze_bot::config::Settings;
+use blaze_bot::error::BlazeError;
+use blaze_bot::{commands, db, renderer, Data};
 
 /// グローバルエラーハンドラ
 /// BlazeError をユーザー向けのエフェメラルメッセージに変換する
@@ -138,13 +120,19 @@ async fn main() {
         .await
         .expect("Discord クライアントの作成に失敗");
 
-    // Graceful Shutdown: Ctrl+C で停止
+    // Graceful Shutdown: SIGINT (Ctrl+C) / SIGTERM で停止
     let shard_manager = client.shard_manager.clone();
     tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("シグナルハンドラの登録に失敗");
-        tracing::info!("シャットダウン中...");
+        let ctrl_c = tokio::signal::ctrl_c();
+        let mut sigterm = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::terminate(),
+        )
+        .expect("SIGTERM ハンドラの登録に失敗");
+
+        tokio::select! {
+            _ = ctrl_c => tracing::info!("SIGINT 受信、シャットダウン中..."),
+            _ = sigterm.recv() => tracing::info!("SIGTERM 受信、シャットダウン中..."),
+        }
         shard_manager.shutdown_all().await;
     });
 

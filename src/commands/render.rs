@@ -69,44 +69,22 @@ pub async fn render_message(
         .is_err()
     {
         tracing::warn!(user_id = user_id_for_rate, "レート制限超過");
-        ctx.send(
-            poise::CreateReply::default()
-                .content("レート制限に達しました。しばらくお待ちください。")
-                .ephemeral(true),
-        )
-        .await?;
-        return Ok(());
+        return Err(BlazeError::RateLimitExceeded);
     }
 
     // 1. コードブロック抽出
-    let code_block = match extract_code_block(&msg.content) {
-        Some(block) => block,
-        None => {
-            ctx.send(
-                poise::CreateReply::default()
-                    .content("メッセージ内に ``` で囲まれたコードブロックが見つかりませんでした")
-                    .ephemeral(true),
-            )
-            .await?;
-            return Ok(());
-        }
-    };
+    let code_block = extract_code_block(&msg.content)
+        .ok_or(BlazeError::CodeBlockNotFound)?;
 
     // 2. 入力バリデーション
     let settings = &ctx.data().settings;
     if code_block.code.lines().count() > settings.max_code_lines
         || code_block.code.len() > settings.max_code_chars
     {
-        ctx.send(
-            poise::CreateReply::default()
-                .content(format!(
-                    "コードが長すぎます（上限: {}行 / {}文字）",
-                    settings.max_code_lines, settings.max_code_chars
-                ))
-                .ephemeral(true),
-        )
-        .await?;
-        return Ok(());
+        return Err(BlazeError::CodeTooLong {
+            max_lines: settings.max_code_lines,
+            max_chars: settings.max_code_chars,
+        });
     }
 
     // バリデーション通過 — ここから時間がかかるので defer する（非エフェメラル）

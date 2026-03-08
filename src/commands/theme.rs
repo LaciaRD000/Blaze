@@ -151,13 +151,7 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
             user_id = user_id_for_rate,
             "プレビュー: レート制限超過"
         );
-        ctx.send(
-            poise::CreateReply::default()
-                .content("レート制限に達しました。しばらくお待ちください。")
-                .ephemeral(true),
-        )
-        .await?;
-        return Ok(());
+        return Err(BlazeError::RateLimitExceeded);
     }
 
     ctx.defer_ephemeral().await?;
