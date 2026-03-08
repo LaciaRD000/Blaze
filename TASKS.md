@@ -77,3 +77,9 @@
 - [x] Render Worker バイナリ（src/bin/worker.rs）
 - [x] Gateway バイナリ（src/bin/gateway.rs）
 - [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md）
+
+## Phase 10: レンダリングパフォーマンス最適化
+
+- [x] ぼかし処理の直接ピクセル操作化（SVG 経由の6段パイプラインを排除）
+- [x] PNG エンコードの高速圧縮化（CompressionType::Fast）
+- [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md）

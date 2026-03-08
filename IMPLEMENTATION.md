@@ -404,3 +404,35 @@ DESIGN.md の設計に基づき、RGBCサイクル（Red→Green→Blue→Commit
 - コミット: `docs: マイクロサービスアーキテクチャを文書化`
 
 **Phase 9 完了確認**: `cargo build --bin blaze-gateway` と `cargo build --bin blaze-worker` が成功し、全テストが合格すること。
+
+---
+
+## Phase 10: レンダリングパフォーマンス最適化
+
+### Step 10.1: ぼかし処理の直接ピクセル操作化
+
+- `blur_pixmap` を SVG 経由（Pixmap→PNG→Base64→SVG→resvg の6段パイプライン）から `image::imageops::blur` による直接ピクセル操作に変更
+- `background::rgba_to_pixmap` を `pub(crate)` に昇格（rasterize.rs から参照）
+- `pixmap_to_rgba` ヘルパーを追加（premultiplied → straight alpha 変換）
+- `base64` クレートが不要になったため Cargo.toml から削除
+- Red: `blur_pixmap_modifies_image`, `blur_pixmap_zero_radius_returns_unchanged`, `blur_pixmap_preserves_dimensions`
+- Green: 実装
+- Blue: clippy + fmt + 不要依存削除
+- コミット: `perf: ぼかし処理を SVG 経由から直接ピクセル操作に変更`
+
+### Step 10.2: PNG エンコードの高速圧縮化
+
+- `tiny_skia::Pixmap::encode_png()` を `image::codecs::png::PngEncoder` に置換
+- `CompressionType::Fast` + `FilterType::Sub` で高速エンコード
+- Discord が画像アップロード時に再圧縮するため Bot 側の高圧縮は不要
+- Red: `encode_png_fast_produces_valid_png`
+- Green: 実装
+- Blue: clippy + fmt
+- コミット: `perf: PNG エンコードを高速圧縮に変更`
+
+### Step 10.3: ドキュメント更新
+
+- DESIGN.md / SPEC.md にパフォーマンス最適化の内容を反映
+- コミット: `docs: Phase 10 パフォーマンス最適化をドキュメントに反映`
+
+**Phase 10 完了確認**: 全テストが合格し、clippy 警告ゼロであること。

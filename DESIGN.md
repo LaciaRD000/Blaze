@@ -708,7 +708,6 @@ uuid = { version = "1", features = ["v4"] }               # ジョブ ID 生成
 
 # ユーティリティ
 dotenvy = "0.15"
-base64 = "0.22"
 regex = "1"
 
 [build-dependencies]
@@ -745,6 +744,8 @@ insta = "1"            # スナップショットテスト
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGは文字列として動的生成**: テンプレートエンジン不要。`format!` / `write!` で組み立てるのが最もシンプルかつ高速
 - **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード SVG の Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
+- **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
+- **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `CompressionType::Fast` + `FilterType::Sub` で高速にエンコードし、CPU コストを削減する
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
 - **コードブロック抽出は正規表現**: `` ```(\w*)\n([\s\S]*?)``` `` で言語タグとコード本体を分離
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する
