@@ -98,6 +98,7 @@ impl Renderer {
             opacity: 0.75,
             background_image: None,
             blur_radius: 8.0,
+            max_line_length: None,
         };
 
         Ok(svg_builder::build_svg(&lines, &options))

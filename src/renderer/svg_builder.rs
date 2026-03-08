@@ -21,6 +21,8 @@ pub struct SvgOptions<'a> {
     pub background_image: Option<&'a str>,
     /// ガウスぼかしの強度（stdDeviation）
     pub blur_radius: f32,
+    /// 1行あたりの最大文字数。超過分は `…` でトリミング。None で無制限
+    pub max_line_length: Option<usize>,
 }
 
 impl Default for SvgOptions<'_> {
@@ -32,8 +34,39 @@ impl Default for SvgOptions<'_> {
             opacity: 0.75,
             background_image: None,
             blur_radius: 8.0,
+            max_line_length: None,
         }
     }
+}
+
+/// トークン列を max_line_length に基づいてトリミングする
+fn trim_tokens(
+    tokens: &[crate::renderer::highlight::StyledToken],
+    max_len: usize,
+) -> Vec<crate::renderer::highlight::StyledToken> {
+    let mut remaining = max_len;
+    let mut result = Vec::new();
+
+    for token in tokens {
+        if remaining == 0 {
+            break;
+        }
+        let char_count = token.text.chars().count();
+        if char_count <= remaining {
+            result.push(token.clone());
+            remaining -= char_count;
+        } else {
+            // トリミングして省略記号を追加
+            let truncated: String =
+                token.text.chars().take(remaining).collect();
+            let mut trimmed_token = token.clone();
+            trimmed_token.text = format!("{truncated}…");
+            result.push(trimmed_token);
+            remaining = 0;
+        }
+    }
+
+    result
 }
 
 /// ハイライト済みコード行からSVG文字列を生成する
@@ -112,7 +145,16 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
             r##"<text x="{PADDING_X}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" xml:space="preserve">"##
         );
 
-        for token in &line.tokens {
+        // max_line_length が指定されている場合はトリミング
+        let trimmed;
+        let tokens = if let Some(max_len) = options.max_line_length {
+            trimmed = trim_tokens(&line.tokens, max_len);
+            &trimmed
+        } else {
+            &line.tokens
+        };
+
+        for token in tokens {
             let color_hex = format!(
                 "#{:02x}{:02x}{:02x}",
                 token.color.r, token.color.g, token.color.b
@@ -266,6 +308,7 @@ mod tests {
             opacity: 0.75,
             background_image: None,
             blur_radius: 8.0,
+            max_line_length: None,
         }
     }
 
@@ -466,6 +509,68 @@ mod tests {
             !svg.contains("<image"),
             "背景画像なしでは image 要素がないべき"
         );
+    }
+
+    #[test]
+    fn build_svg_trims_long_lines() {
+        // 150文字の長い行を作成
+        let long_text = "a".repeat(150);
+        let lines = vec![HighlightedLine {
+            tokens: vec![StyledToken {
+                text: long_text,
+                color: Color {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+                bold: false,
+                italic: false,
+            }],
+        }];
+        let opts = SvgOptions {
+            max_line_length: Some(120),
+            ..default_options()
+        };
+        let svg = build_svg(&lines, &opts);
+        // トリミングされて "…" が含まれるべき
+        assert!(
+            svg.contains("…"),
+            "120文字超の行はトリミングされて省略記号が含まれるべき"
+        );
+        // 元の150文字の 'a' が全部は含まれないべき
+        assert!(
+            !svg.contains(&"a".repeat(150)),
+            "150文字すべてが含まれるべきではない"
+        );
+    }
+
+    #[test]
+    fn build_svg_no_trim_when_within_limit() {
+        let short_text = "a".repeat(50);
+        let lines = vec![HighlightedLine {
+            tokens: vec![StyledToken {
+                text: short_text.clone(),
+                color: Color {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+                bold: false,
+                italic: false,
+            }],
+        }];
+        let opts = SvgOptions {
+            max_line_length: Some(120),
+            ..default_options()
+        };
+        let svg = build_svg(&lines, &opts);
+        assert!(
+            svg.contains(&short_text),
+            "制限内の行はそのまま含まれるべき"
+        );
+        assert!(!svg.contains("…"), "制限内の行には省略記号がないべき");
     }
 
     /// SVGからheight属性の数値を抽出するヘルパー
