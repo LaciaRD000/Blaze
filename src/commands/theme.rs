@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::db::models::UserTheme;
 use crate::db::{PgThemeRepository, ThemeRepository};
 use crate::error::BlazeError;
@@ -10,6 +12,8 @@ pub async fn theme(_ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// カラースキーム・背景・ぼかし等を設定
+// poise のスラッシュコマンドは各パラメータが引数になるため抑制
+#[allow(clippy::too_many_arguments)]
 #[poise::command(slash_command)]
 pub async fn set(
     ctx: Context<'_>,
@@ -18,20 +22,22 @@ pub async fn set(
     #[description = "ぼかし強度 (0-30)"] blur: Option<f64>,
     #[description = "不透明度 (0.3-1.0)"] opacity: Option<f64>,
     #[description = "タイトルバー (macos/linux)"] title_bar: Option<String>,
+    #[description = "フォント (FiraCode/PlemolJP)"] font: Option<String>,
+    #[description = "行番号表示 (true/false)"] show_line_numbers: Option<bool>,
 ) -> Result<(), Error> {
     // パラメータバリデーション
     if let Some(blur) = blur
         && !(0.0..=30.0).contains(&blur)
     {
-        return Err(BlazeError::rendering(
-            "ぼかし強度は 0〜30 の範囲で指定してください",
+        return Err(BlazeError::InvalidTheme(
+            "ぼかし強度は 0〜30 の範囲で指定してください".to_string(),
         ));
     }
     if let Some(opacity) = opacity
         && !(0.3..=1.0).contains(&opacity)
     {
-        return Err(BlazeError::rendering(
-            "不透明度は 0.3〜1.0 の範囲で指定してください",
+        return Err(BlazeError::InvalidTheme(
+            "不透明度は 0.3〜1.0 の範囲で指定してください".to_string(),
         ));
     }
     if let Some(ref tb) = title_bar
@@ -40,6 +46,14 @@ pub async fn set(
     {
         return Err(BlazeError::InvalidTheme(format!(
             "タイトルバーは 'macos' または 'linux' を指定してください: {tb}"
+        )));
+    }
+    if let Some(ref f) = font
+        && f != "Fira Code"
+        && f != "PlemolJP"
+    {
+        return Err(BlazeError::InvalidTheme(format!(
+            "フォントは 'Fira Code' または 'PlemolJP' を指定してください: {f}"
         )));
     }
     if let Some(ref cs) = color_scheme {
@@ -91,6 +105,12 @@ pub async fn set(
     if let Some(tb) = title_bar {
         theme.title_bar_style = tb;
     }
+    if let Some(f) = font {
+        theme.font_family = f;
+    }
+    if let Some(sln) = show_line_numbers {
+        theme.show_line_numbers = if sln { 1 } else { 0 };
+    }
 
     repo.upsert_theme(&theme).await?;
 
@@ -119,6 +139,27 @@ const PREVIEW_CODE: &str = r#"fn main() {
 /// 現在のテーマでサンプルコードをプレビュー
 #[poise::command(slash_command)]
 pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
+    // レート制限チェック
+    let user_id_for_rate = ctx.author().id.get();
+    if ctx
+        .data()
+        .rate_limiter
+        .check_key(&user_id_for_rate)
+        .is_err()
+    {
+        tracing::warn!(
+            user_id = user_id_for_rate,
+            "プレビュー: レート制限超過"
+        );
+        ctx.send(
+            poise::CreateReply::default()
+                .content("レート制限に達しました。しばらくお待ちください。")
+                .ephemeral(true),
+        )
+        .await?;
+        return Ok(());
+    }
+
     ctx.defer_ephemeral().await?;
 
     let user_id = ctx.author().id.get() as i64;
@@ -129,13 +170,28 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
         .await?
         .unwrap_or_else(|| UserTheme::with_defaults(user_id));
 
-    let renderer = std::sync::Arc::clone(&ctx.data().renderer);
+    // Semaphore で同時実行数を制御
+    let _permit = ctx
+        .data()
+        .render_semaphore
+        .acquire()
+        .await
+        .map_err(|e| BlazeError::rendering(e.to_string()))?;
+
+    let renderer = Arc::clone(&ctx.data().renderer);
     let theme_name = theme.color_scheme.clone();
+    let max_line_length = ctx.data().settings.max_line_length;
     let render_options = crate::renderer::RenderOptions {
         title_bar_style: theme.title_bar_style.clone(),
         opacity: theme.opacity,
         blur_radius: theme.blur_radius,
         show_line_numbers: theme.show_line_numbers != 0,
+        max_line_length: Some(max_line_length),
+        background_image: if theme.background_id == "default" {
+            None
+        } else {
+            Some(theme.background_id.clone())
+        },
     };
 
     let png = tokio::task::spawn_blocking(move || {
@@ -148,6 +204,8 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
     })
     .await
     .map_err(|e| BlazeError::rendering(e.to_string()))??;
+
+    drop(_permit);
 
     let attachment =
         poise::serenity_prelude::CreateAttachment::bytes(png, "preview.png");

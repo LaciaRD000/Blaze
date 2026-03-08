@@ -137,11 +137,18 @@ pub async fn render_message(
     let code = code_block.code.clone();
     let language = code_block.language.clone();
     let theme_name = theme.color_scheme.clone();
+    let max_line_length = ctx.data().settings.max_line_length;
     let render_options = crate::renderer::RenderOptions {
         title_bar_style: theme.title_bar_style.clone(),
         opacity: theme.opacity,
         blur_radius: theme.blur_radius,
         show_line_numbers: theme.show_line_numbers != 0,
+        max_line_length: Some(max_line_length),
+        background_image: if theme.background_id == "default" {
+            None
+        } else {
+            Some(theme.background_id.clone())
+        },
     };
 
     let png = tokio::task::spawn_blocking(move || {

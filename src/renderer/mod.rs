@@ -17,6 +17,10 @@ pub struct RenderOptions {
     pub opacity: f64,
     pub blur_radius: f64,
     pub show_line_numbers: bool,
+    /// 1行あたりの最大文字数。超過分は `…` でトリミング。None で無制限
+    pub max_line_length: Option<usize>,
+    /// 背景画像ID。"default" でデフォルトグラデーション背景を使用
+    pub background_image: Option<String>,
 }
 
 impl Default for RenderOptions {
@@ -26,6 +30,8 @@ impl Default for RenderOptions {
             opacity: 0.75,
             blur_radius: 8.0,
             show_line_numbers: false,
+            max_line_length: None,
+            background_image: None,
         }
     }
 }
@@ -144,14 +150,35 @@ impl Renderer {
         let lines =
             highlight::highlight(code, language, &self.syntax_set, theme);
 
+        // 背景画像の生成（background_id が指定されている場合）
+        let bg_image_base64 = if render_options.background_image.is_some() {
+            // SVG の総サイズを推定して背景画像を生成
+            let window_width = 800u32;
+            let shadow_margin = 32u32;
+            let total_width = window_width + shadow_margin * 2;
+            let total_height =
+                shadow_margin * 2 + 36 + 32 + 20 * lines.len() as u32;
+            let png = background::generate_default_background(
+                total_width,
+                total_height,
+            );
+            Some(background::resize_to_base64(
+                &png,
+                total_width,
+                total_height,
+            )?)
+        } else {
+            None
+        };
+
         let svg_options = svg_builder::SvgOptions {
             bg_color: &bg_color,
             language,
             title_bar_style: &render_options.title_bar_style,
             opacity: render_options.opacity as f32,
-            background_image: None,
+            background_image: bg_image_base64.as_deref(),
             blur_radius: render_options.blur_radius as f32,
-            max_line_length: None,
+            max_line_length: render_options.max_line_length,
             show_line_numbers: render_options.show_line_numbers,
         };
 
@@ -300,5 +327,47 @@ mod tests {
             )
             .expect("SVG生成に成功するべき");
         assert!(svg.contains(">1</text>"), "行番号が表示されるべき");
+    }
+
+    #[test]
+    fn render_with_options_applies_max_line_length() {
+        let renderer = Renderer::new();
+        let long_line = "a".repeat(150);
+        let opts = RenderOptions {
+            max_line_length: Some(120),
+            ..Default::default()
+        };
+        let svg = renderer
+            .render_svg_with_options(
+                &long_line,
+                None,
+                "base16-ocean.dark",
+                &opts,
+            )
+            .expect("SVG生成に成功するべき");
+        assert!(
+            svg.contains("…"),
+            "max_line_length で長い行がトリミングされるべき"
+        );
+    }
+
+    #[test]
+    fn render_with_options_applies_background_image() {
+        let renderer = Renderer::new();
+        let opts = RenderOptions {
+            background_image: Some("default".to_string()),
+            ..Default::default()
+        };
+        let svg = renderer
+            .render_svg_with_options("test", None, "base16-ocean.dark", &opts)
+            .expect("SVG生成に成功するべき");
+        assert!(
+            svg.contains("feGaussianBlur"),
+            "背景画像ありの場合ガウスぼかしが含まれるべき"
+        );
+        assert!(
+            svg.contains("<image"),
+            "背景画像の image 要素が含まれるべき"
+        );
     }
 }
