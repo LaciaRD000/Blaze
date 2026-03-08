@@ -37,13 +37,13 @@
 
 ## Phase 4: テーマ管理 + DB
 
-- [ ] SQLite セットアップ + マイグレーション（001_create_user_themes）
-- [ ] db/models.rs: UserTheme 構造体 + CRUD
-- [ ] db/mod.rs: ThemeRepository トレイト + SqliteThemeRepository
-- [ ] /theme set コマンド
-- [ ] /theme preview コマンド
-- [ ] /theme reset コマンド
-- [ ] DB障害時のデフォルトテーマフォールバック
+- [x] SQLite セットアップ + マイグレーション（001_create_user_themes）
+- [x] db/models.rs: UserTheme 構造体 + CRUD
+- [x] db/mod.rs: ThemeRepository トレイト + SqliteThemeRepository
+- [x] /theme set コマンド
+- [x] /theme preview コマンド
+- [x] /theme reset コマンド
+- [x] DB障害時のデフォルトテーマフォールバック
 
 ## Phase 5: 本番品質
 
