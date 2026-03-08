@@ -146,7 +146,18 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
 
 /// テーマをデフォルトにリセット
 #[poise::command(slash_command)]
-pub async fn reset(_ctx: Context<'_>) -> Result<(), Error> {
-    // Step 4.5 で実装
+pub async fn reset(ctx: Context<'_>) -> Result<(), Error> {
+    let user_id = ctx.author().id.get();
+    let repo = SqliteThemeRepository::new(ctx.data().db.clone());
+
+    repo.delete_theme(user_id).await?;
+
+    ctx.send(
+        poise::CreateReply::default()
+            .content("テーマをデフォルトにリセットしました")
+            .ephemeral(true),
+    )
+    .await?;
+
     Ok(())
 }
