@@ -77,6 +77,40 @@ impl Renderer {
         // 3. PNG変換
         rasterize::rasterize(&svg, Arc::clone(&self.font_db))
     }
+
+    /// SVG文字列のみを返す（スナップショットテスト用）
+    pub fn render_svg(
+        &self,
+        code: &str,
+        language: Option<&str>,
+        theme_name: &str,
+    ) -> Result<String, BlazeError> {
+        let theme = self
+            .theme_set
+            .themes
+            .get(theme_name)
+            .or_else(|| self.theme_set.themes.get("base16-ocean.dark"))
+            .ok_or_else(|| {
+                BlazeError::rendering("デフォルトテーマが見つかりません")
+            })?;
+
+        let bg =
+            theme
+                .settings
+                .background
+                .unwrap_or(syntect::highlighting::Color {
+                    r: 30,
+                    g: 30,
+                    b: 46,
+                    a: 255,
+                });
+        let bg_color = format!("#{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b);
+
+        let lines =
+            highlight::highlight(code, language, &self.syntax_set, theme);
+
+        Ok(svg_builder::build_svg(&lines, &bg_color))
+    }
 }
 
 #[cfg(test)]
@@ -109,6 +143,16 @@ mod tests {
             .render("just text", None, "base16-ocean.dark")
             .expect("プレーンテキストでもレンダリングに成功するべき");
         assert!(!png.is_empty());
+    }
+
+    #[test]
+    fn snapshot_rust_hello_world_svg() {
+        let renderer = Renderer::new();
+        let code = "fn main() {\n    println!(\"Hello, world!\");\n}";
+        let svg = renderer
+            .render_svg(code, Some("rust"), "base16-ocean.dark")
+            .expect("SVG生成に成功するべき");
+        insta::assert_snapshot!(svg);
     }
 
     #[test]
