@@ -16,14 +16,19 @@ pub fn rasterize(
     let tree = usvg::Tree::from_str(svg, &options)
         .map_err(|e| BlazeError::rendering(format!("SVGパース失敗: {e}")))?;
 
+    let scale: f32 = 2.0;
     let size = tree.size();
-    let width = size.width() as u32;
-    let height = size.height() as u32;
+    let width = (size.width() * scale) as u32;
+    let height = (size.height() * scale) as u32;
 
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("Pixmap の作成に失敗"))?;
 
-    resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
 
     pixmap
         .encode_png()
