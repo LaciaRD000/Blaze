@@ -354,3 +354,53 @@ DESIGN.md の設計に基づき、RGBCサイクル（Red→Green→Blue→Commit
 - コミット: `feat: 行番号表示オプションを実装`
 
 **Phase 8 完了確認**: 行番号表示の切り替えが正常に動作すること。
+
+---
+
+## Phase 9: 高度なアーキテクチャ最適化
+
+### Step 9.1: syntect バイナリダンプ化
+
+- `build.rs` を作成し、ビルド時に SyntaxSet / ThemeSet を uncompressed packdump に出力
+- ランタイムの syntect フィーチャーから `default-syntaxes` / `default-themes` を除去
+- `Renderer::new()` を `from_uncompressed_data()` によるダンプロードに変更
+- `highlight.rs` テスト内のヘルパーもダンプロードに変更
+- Red: 既存テスト（106 unit + 7 integration）がダンプロードで合格すること
+- Green: build.rs + Renderer 変更
+- Blue: clippy + fmt
+- コミット: `perf: syntect バイナリダンプ化で起動を高速化`
+
+### Step 9.2: Gateway / Worker 分離 — プロトコル定義
+
+- `src/protocol.rs` を作成: RenderJob, RenderJobOptions, RenderResult
+- Redis 定数（キュー名、結果キー接頭辞、TTL）を定義
+- Cargo.toml に redis, serde_json, uuid を追加
+- Settings に `redis_url: Option<String>` を追加
+- Red: プロトコルのシリアライズ/デシリアライズ roundtrip テスト
+- Green: 実装
+- Blue: clippy + fmt
+- コミット: `feat: Gateway/Worker 間プロトコルを定義`
+
+### Step 9.3: Worker バイナリ
+
+- `src/bin/worker.rs` を作成
+- Redis BRPOP でジョブを待機 → Renderer でレンダリング → LPUSH で結果を返す
+- セマフォで同時実行数を制御、spawn_blocking で CPU バウンド処理を分離
+- テスト: なし（Redis 接続が必要なため手動確認）
+- コミット: `feat: Render Worker バイナリを実装`
+
+### Step 9.4: Gateway バイナリ
+
+- `src/bin/gateway.rs` を作成
+- Discord I/O + 入力バリデーション + Redis キュー投入 + 結果待機
+- レンダリングは Worker に委譲（Gateway 自身では spawn_blocking しない）
+- テスト: なし（Discord + Redis 接続が必要なため手動確認）
+- コミット: `feat: Gateway バイナリを実装`
+
+### Step 9.5: ドキュメント更新
+
+- DESIGN.md にマイクロサービスアーキテクチャを追加
+- SPEC.md にデプロイモードと REDIS_URL を追加
+- コミット: `docs: マイクロサービスアーキテクチャを文書化`
+
+**Phase 9 完了確認**: `cargo build --bin blaze-gateway` と `cargo build --bin blaze-worker` が成功し、全テストが合格すること。

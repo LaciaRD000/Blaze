@@ -69,3 +69,11 @@
 
 - [x] 行番号表示オプション（show_line_numbers）
 - [ ] 複数コードブロック対応（将来）
+
+## Phase 9: 高度なアーキテクチャ最適化
+
+- [x] syntect バイナリダンプ化（build.rs + from_uncompressed_data）
+- [x] Gateway / Worker 間プロトコル定義（protocol.rs）
+- [x] Render Worker バイナリ（src/bin/worker.rs）
+- [x] Gateway バイナリ（src/bin/gateway.rs）
+- [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md）
