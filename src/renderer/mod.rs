@@ -94,6 +94,7 @@ impl Renderer {
             bg_color: &bg_color,
             language,
             title_bar_style: "macos",
+            opacity: 0.75,
         };
 
         Ok(svg_builder::build_svg(&lines, &options))

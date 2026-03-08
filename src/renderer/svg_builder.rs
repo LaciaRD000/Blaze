@@ -16,6 +16,7 @@ pub struct SvgOptions<'a> {
     pub bg_color: &'a str,
     pub language: Option<&'a str>,
     pub title_bar_style: &'a str,
+    pub opacity: f32,
 }
 
 impl Default for SvgOptions<'_> {
@@ -24,6 +25,7 @@ impl Default for SvgOptions<'_> {
             bg_color: "#1e1e2e",
             language: None,
             title_bar_style: "macos",
+            opacity: 0.75,
         }
     }
 }
@@ -61,11 +63,12 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
         r##"<g transform="translate({SHADOW_MARGIN},{SHADOW_MARGIN})" filter="url(#shadow)">"##
     );
 
-    // ウィンドウ背景（角丸）
+    // ウィンドウ背景（角丸 + 半透明）
     let bg = options.bg_color;
+    let opacity = options.opacity;
     let _ = write!(
         svg,
-        r##"<rect width="{window_width}" height="{window_height}" rx="{BORDER_RADIUS}" fill="{bg}"/>"##
+        r##"<rect width="{window_width}" height="{window_height}" rx="{BORDER_RADIUS}" fill="{bg}" fill-opacity="{opacity}"/>"##
     );
 
     // タイトルバー
@@ -192,6 +195,7 @@ mod tests {
             bg_color: "#1e1e2e",
             language: Some("rust"),
             title_bar_style: "macos",
+            opacity: 0.75,
         }
     }
 
@@ -311,6 +315,15 @@ mod tests {
         assert!(
             svg.contains("filter=\"url(#shadow)\""),
             "シャドウフィルタが適用されているべき"
+        );
+    }
+
+    #[test]
+    fn build_svg_has_fill_opacity() {
+        let svg = build_svg(&sample_lines(), &default_options());
+        assert!(
+            svg.contains("fill-opacity=\"0.75\""),
+            "fill-opacity が含まれるべき"
         );
     }
 
