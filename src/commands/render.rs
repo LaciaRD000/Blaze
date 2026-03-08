@@ -3,6 +3,8 @@ use std::sync::Arc;
 use poise::serenity_prelude as serenity;
 use regex::Regex;
 
+use crate::db::models::UserTheme;
+use crate::db::{SqliteThemeRepository, ThemeRepository};
 use crate::error::BlazeError;
 use crate::sanitize::sanitize_code;
 use crate::{Context, Error};
@@ -93,11 +95,21 @@ pub async fn render_message(
     // 3. 入力サニタイズ
     let code_block = code_block.sanitized();
 
-    // 4. レンダリング（CPUバウンドなので spawn_blocking）
+    // 4. ユーザーテーマ取得（DB障害時はデフォルトにフォールバック）
+    let user_id = ctx.author().id.get() as i64;
+    let theme = {
+        let repo = SqliteThemeRepository::new(ctx.data().db.clone());
+        repo.get_theme(user_id as u64)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| UserTheme::with_defaults(user_id))
+    };
+
+    // 5. レンダリング（CPUバウンドなので spawn_blocking）
     let renderer = Arc::clone(&ctx.data().renderer);
     let code = code_block.code.clone();
     let language = code_block.language.clone();
-    let theme_name = "base16-ocean.dark".to_string();
+    let theme_name = theme.color_scheme.clone();
 
     let png = tokio::task::spawn_blocking(move || {
         renderer.render(&code, language.as_deref(), &theme_name)
@@ -105,7 +117,7 @@ pub async fn render_message(
     .await
     .map_err(|e| BlazeError::rendering(e.to_string()))??;
 
-    // 5. 画像をリプライとして送信
+    // 6. 画像をリプライとして送信
     let attachment = serenity::CreateAttachment::bytes(png, "code.png");
     ctx.send(
         poise::CreateReply::default()
