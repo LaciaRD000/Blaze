@@ -1,2 +1,9 @@
 /target
 .env*
+
+# Redis
+*.rdb
+appendonly.aof
+
+# Logs
+*.log
