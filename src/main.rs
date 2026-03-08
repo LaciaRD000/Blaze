@@ -84,7 +84,10 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![commands::render::render_message()],
+            commands: vec![
+                commands::render::render_message(),
+                commands::theme::theme(),
+            ],
             on_error: |err| Box::pin(on_error(err)),
             ..Default::default()
         })
