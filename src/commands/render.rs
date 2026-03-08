@@ -105,7 +105,14 @@ pub async fn render_message(
             .unwrap_or_else(|| UserTheme::with_defaults(user_id))
     };
 
-    // 5. レンダリング（CPUバウンドなので spawn_blocking）
+    // 5. Semaphore で同時実行数を制御してレンダリング
+    let _permit = ctx
+        .data()
+        .render_semaphore
+        .acquire()
+        .await
+        .map_err(|e| BlazeError::rendering(e.to_string()))?;
+
     let renderer = Arc::clone(&ctx.data().renderer);
     let code = code_block.code.clone();
     let language = code_block.language.clone();
@@ -116,6 +123,8 @@ pub async fn render_message(
     })
     .await
     .map_err(|e| BlazeError::rendering(e.to_string()))??;
+
+    drop(_permit);
 
     // 6. 画像をリプライとして送信
     let attachment = serenity::CreateAttachment::bytes(png, "code.png");
