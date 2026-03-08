@@ -19,7 +19,7 @@ blaze-bot/
 │   ├── 001_create_user_themes.up.sql    # CREATE TABLE
 │   └── 001_create_user_themes.down.sql  # DROP TABLE (ロールバック用)
 ├── assets/
-│   ├── fonts/                    # 埋め込みフォント (FiraCode, PlemolJP等)
+│   ├── fonts/                    # 埋め込みフォント (FiraCode, PlemolJP, HackGen NF)
 │   └── backgrounds/              # デフォルト背景画像
 ├── src/
 │   ├── main.rs                   # エントリポイント、Bot起動
@@ -290,6 +290,7 @@ impl Renderer {
 fn load_fonts(font_db: &mut fontdb::Database) {
     font_db.load_font_data(include_bytes!("../assets/fonts/FiraCode-Regular.ttf").to_vec());
     font_db.load_font_data(include_bytes!("../assets/fonts/PlemolJP-Regular.ttf").to_vec());
+    font_db.load_font_data(include_bytes!("../assets/fonts/HackGenConsoleNF-Regular.ttf").to_vec());
 }
 
 // リソース制限値は Settings.max_code_lines / Settings.max_code_chars を参照する
@@ -721,8 +722,8 @@ insta = "1"            # スナップショットテスト
 
 コード内の日本語コメントの文字化け（豆腐化）を防ぐ。
 
-- SVG の `font-family` 属性: `"Fira Code", "PlemolJP", sans-serif`
-- `Renderer::new()` 内で `load_fonts()` を呼び出し、英字・日本語フォントの両方をロード
+- SVG の `font-family` 属性: `"Fira Code", "PlemolJP", "HackGen Console NF", sans-serif`（ユーザー設定に応じて変動）
+- `Renderer::new()` 内で `load_fonts()` を呼び出し、英字・日本語フォントの全3種をロード
 - フォント読み込みの実装詳細は「レンダラー」型定義および改善要件 #11 を参照
 
 ### 3. UXを考慮したエラーハンドリング
