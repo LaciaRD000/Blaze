@@ -8,6 +8,8 @@ const LINE_HEIGHT: f32 = 20.0;
 const PADDING_X: f32 = 16.0;
 const PADDING_Y: f32 = 16.0;
 const TITLE_BAR_HEIGHT: f32 = 36.0;
+const SHADOW_MARGIN: f32 = 32.0;
+const BORDER_RADIUS: f32 = 12.0;
 
 /// SVG生成オプション
 pub struct SvgOptions<'a> {
@@ -28,26 +30,42 @@ impl Default for SvgOptions<'_> {
 
 /// ハイライト済みコード行からSVG文字列を生成する
 pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
-    let width = 800.0;
+    let window_width = 800.0;
     let code_height = PADDING_Y * 2.0 + LINE_HEIGHT * lines.len() as f32;
     let title_bar_h = if options.title_bar_style == "none" {
         0.0
     } else {
         TITLE_BAR_HEIGHT
     };
-    let height = title_bar_h + code_height;
+    let window_height = title_bar_h + code_height;
+
+    // 外側マージン（シャドウが見えるように）
+    let total_width = window_width + SHADOW_MARGIN * 2.0;
+    let total_height = window_height + SHADOW_MARGIN * 2.0;
 
     let mut svg = String::new();
     let _ = write!(
         svg,
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">"##
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{total_width}" height="{total_height}">"##
     );
 
-    // 背景
+    // defs: ドロップシャドウフィルタ
+    let _ = write!(
+        svg,
+        r##"<defs><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="16" flood-opacity="0.4"/></filter></defs>"##
+    );
+
+    // ウィンドウグループ（シャドウ + 角丸）
+    let _ = write!(
+        svg,
+        r##"<g transform="translate({SHADOW_MARGIN},{SHADOW_MARGIN})" filter="url(#shadow)">"##
+    );
+
+    // ウィンドウ背景（角丸）
     let bg = options.bg_color;
     let _ = write!(
         svg,
-        r##"<rect width="{width}" height="{height}" fill="{bg}"/>"##
+        r##"<rect width="{window_width}" height="{window_height}" rx="{BORDER_RADIUS}" fill="{bg}"/>"##
     );
 
     // タイトルバー
@@ -95,6 +113,9 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
 
         svg.push_str("</text>");
     }
+
+    // ウィンドウグループ閉じ
+    svg.push_str("</g>");
 
     svg.push_str("</svg>");
     svg
@@ -271,6 +292,25 @@ mod tests {
         assert!(
             !svg.contains("circle"),
             "タイトルバーなしでは circle がないべき"
+        );
+    }
+
+    #[test]
+    fn build_svg_has_rounded_corners() {
+        let svg = build_svg(&sample_lines(), &default_options());
+        assert!(svg.contains("rx=\"12\""), "角丸のrx属性が含まれるべき");
+    }
+
+    #[test]
+    fn build_svg_has_drop_shadow_filter() {
+        let svg = build_svg(&sample_lines(), &default_options());
+        assert!(
+            svg.contains("feDropShadow") || svg.contains("feGaussianBlur"),
+            "ドロップシャドウフィルタが含まれるべき"
+        );
+        assert!(
+            svg.contains("filter=\"url(#shadow)\""),
+            "シャドウフィルタが適用されているべき"
         );
     }
 
