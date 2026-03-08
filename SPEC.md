@@ -186,20 +186,20 @@ Bot にバンドルされたフォントから選択する。
 
 ### 7.1 保存データ
 
-ユーザーごとのテーマ設定のみをSQLiteデータベースに保存する。
+ユーザーごとのテーマ設定のみをPostgreSQLデータベース（Supabase）に保存する。
 
 | カラム | 型 | 説明 |
 |-------|-----|------|
-| `user_id` | INTEGER (PK) | Discord ユーザー ID |
+| `user_id` | BIGINT (PK) | Discord ユーザー ID |
 | `color_scheme` | TEXT | カラースキーム名 |
 | `background_id` | TEXT | 背景画像識別子 |
-| `blur_radius` | REAL | ぼかし強度 |
-| `opacity` | REAL | 不透明度 |
+| `blur_radius` | DOUBLE PRECISION | ぼかし強度 |
+| `opacity` | DOUBLE PRECISION | 不透明度 |
 | `font_family` | TEXT | フォント名 |
-| `font_size` | REAL | フォントサイズ (pt) |
+| `font_size` | DOUBLE PRECISION | フォントサイズ (pt) |
 | `title_bar_style` | TEXT | タイトルバースタイル |
-| `show_line_numbers` | INTEGER | 行番号表示 (0=OFF, 1=ON) |
-| `updated_at` | TEXT | 最終更新日時 |
+| `show_line_numbers` | BOOLEAN | 行番号表示 |
+| `updated_at` | TIMESTAMPTZ | 最終更新日時 |
 
 ### 7.2 データ喪失時の挙動
 
@@ -228,7 +228,7 @@ Bot にバンドルされたフォントから選択する。
 | `Use Slash Commands` | スラッシュコマンドの登録・実行 |
 
 **Gateway Intents**:
-- `non_privileged`（特権Intentsは不要）
+- `non_privileged` + `MESSAGE_CONTENT`（特権Intent。コンテキストメニューで対象メッセージのコードブロックを読み取るために必要）
 
 ---
 
@@ -237,7 +237,7 @@ Bot にバンドルされたフォントから選択する。
 | 変数名 | 必須 | 説明 |
 |--------|------|------|
 | `DISCORD_TOKEN` | 必須 | Discord Bot トークン |
-| `DATABASE_URL` | 必須 | SQLite データベースファイルパス（例: `sqlite:blaze.db`） |
+| `DATABASE_URL` | 必須 | PostgreSQL 接続文字列（例: `postgresql://user:pass@host:port/db`） |
 
 シークレット情報は `.env` ファイルで管理し、設定ファイル（`config/default.toml`）には含めない。
 
@@ -280,9 +280,9 @@ log_level = "info"
 
 ### 12.4 保守性
 
-- SQLite の WALモードを有効にし、読み取り/書き込みの並行性を確保する
+- PostgreSQL は読み取り/書き込みの並行性をネイティブに確保する（MVCC）
 - マイグレーションは `sqlx` の `.up.sql` / `.down.sql` ペアでロールバック可能
-- 日次バックアップを運用スクリプトで実施（`sqlite3 .backup`）
+- 日次バックアップを `pg_dump` または Supabase ダッシュボードのバックアップ機能で実施
 
 ---
 
@@ -294,7 +294,7 @@ log_level = "info"
 | Discord API | poise (serenity を re-export) |
 | 構文解析 | syntect |
 | 画像生成 | resvg / tiny-skia（SVG → PNG） |
-| データベース | SQLite (sqlx) |
+| データベース | PostgreSQL / Supabase (sqlx) |
 | エラーハンドリング | thiserror |
 | レート制限 | governor |
 | ロギング | tracing / tracing-subscriber |
@@ -313,4 +313,4 @@ log_level = "info"
 | ガウスぼかし | 画像にかけるぼかしエフェクト。値が大きいほど強くぼける |
 | タイトルバー | ターミナルウィンドウ上部の装飾部分（閉じる/最小化/最大化ボタン等） |
 | レート制限 | 単位時間あたりのリクエスト回数を制限する仕組み |
-| WALモード | SQLite の Write-Ahead Logging。読み書きの並行性を向上させるジャーナルモード |
+| MVCC | PostgreSQL の Multi-Version Concurrency Control。読み書きの並行性をネイティブに確保する仕組み |

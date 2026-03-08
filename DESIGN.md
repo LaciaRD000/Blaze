@@ -36,7 +36,7 @@ blaze-bot/
 │   │   ├── svg_builder.rs        # 動的SVG文字列の組み立て
 │   │   └── rasterize.rs          # resvg/tiny-skia で SVG→PNG変換
 │   └── db/
-│       ├── mod.rs                # ThemeRepository トレイト、SQLxコネクションプール
+│       ├── mod.rs                # ThemeRepository トレイト、PgPoolコネクションプール
 │       └── models.rs             # UserTheme 構造体・CRUD
 ├── tests/
 │   ├── extract_code_block.rs     # コードブロック抽出テスト
@@ -87,7 +87,7 @@ blaze-bot/
 
 ```rust
 pub struct Data {
-    pub db: sqlx::SqlitePool,
+    pub db: sqlx::PgPool,
     pub renderer: Arc<renderer::Renderer>,
     pub rate_limiter: Arc<governor::DefaultKeyedRateLimiter<u64>>,
     pub render_semaphore: Arc<tokio::sync::Semaphore>,  // spawn_blocking 同時実行数制御
@@ -532,16 +532,16 @@ pub async fn reset(ctx: Context<'_>) -> Result<(), Error> { /* DB削除 */ }
 ```sql
 -- migrations/001_create_user_themes.up.sql
 CREATE TABLE IF NOT EXISTS user_themes (
-    user_id         INTEGER PRIMARY KEY,  -- Discord user ID
+    user_id         BIGINT PRIMARY KEY,  -- Discord user ID
     color_scheme    TEXT NOT NULL DEFAULT 'base16-ocean.dark',
     background_id   TEXT NOT NULL DEFAULT 'default',
-    blur_radius     REAL NOT NULL DEFAULT 8.0,
-    opacity         REAL NOT NULL DEFAULT 0.75,
+    blur_radius     DOUBLE PRECISION NOT NULL DEFAULT 8.0,
+    opacity         DOUBLE PRECISION NOT NULL DEFAULT 0.75,
     font_family     TEXT NOT NULL DEFAULT 'Fira Code',
-    font_size       REAL NOT NULL DEFAULT 14.0,
+    font_size       DOUBLE PRECISION NOT NULL DEFAULT 14.0,
     title_bar_style     TEXT NOT NULL DEFAULT 'macos',
-    show_line_numbers   INTEGER NOT NULL DEFAULT 0,  -- 0=OFF, 1=ON (Phase 8 で実装、スキーマは先行準備)
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    show_line_numbers   BOOLEAN NOT NULL DEFAULT FALSE,  -- Phase 8 で実装、スキーマは先行準備
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
@@ -559,15 +559,14 @@ CREATE TABLE IF NOT EXISTS user_themes (
 
 ### バックアップ・障害復旧
 
-- SQLiteはファイルベースのため、定期的なファイルコピーでバックアップ可能
-- Bot起動時に `VACUUM` は実行しない（ロック競合を避けるため）
+- Supabase ダッシュボードの自動バックアップ機能を利用可能
 - 運用スクリプトで日次バックアップを推奨:
   ```bash
-  # cron等で日次実行。sqlite3 の .backup はオンラインバックアップに対応
-  sqlite3 blaze.db ".backup 'backup/blaze_$(date +%Y%m%d).db'"
+  # cron等で日次実行
+  pg_dump "$DATABASE_URL" > "backup/blaze_$(date +%Y%m%d).sql"
   ```
 - テーマデータは復旧不能でもサービス継続に支障なし（デフォルトテーマにフォールバック）
-- WALモード（`PRAGMA journal_mode=WAL`）を有効にし、読み取り/書き込みの並行性を確保
+- PostgreSQL は MVCC により読み取り/書き込みの並行性をネイティブに確保
 
 ---
 
@@ -587,7 +586,7 @@ resvg = "0.45"
 tiny-skia = "0.11"
 
 # データベース
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "chrono"] }
 
 # エラーハンドリング
 thiserror = "2"
@@ -625,7 +624,7 @@ insta = "1"            # スナップショットテスト
 | **Phase 1** | Bot起動 + コンテキストメニュー登録 + コードブロック抽出 | Discordとの接続確立 |
 | **Phase 2** | syntectでハイライト → 最小限のSVG生成 → PNG変換 | 基本的な画像出力 |
 | **Phase 3** | ガラスエフェクト・タイトルバー・影・角丸の実装 | ビジュアル完成 |
-| **Phase 4** | SQLite + テーマ保存/読み込み + `/theme` コマンド群 | パーソナライズ |
+| **Phase 4** | PostgreSQL (Supabase) + テーマ保存/読み込み + `/theme` コマンド群 | パーソナライズ |
 | **Phase 5** | フォント埋め込み・背景画像バリエーション・パフォーマンス最適化 | 本番品質 |
 | **Phase 6** | 独自エラー型 + レート制限 + 入力サニタイズ + 設定管理強化 | 堅牢性・セキュリティ |
 | **Phase 7** | ロギング基盤整備 + メトリクス収集 | 運用監視 |
@@ -668,7 +667,7 @@ insta = "1"            # スナップショットテスト
 | ファイル | 内容 |
 |---------|------|
 | `render_pipeline.rs` | コード入力 → PNG バイト列出力までのE2Eテスト |
-| `theme_repository.rs` | SQLiteに対するCRUD操作（インメモリDB使用） |
+| `theme_repository.rs` | PostgreSQLに対するCRUD操作（テスト用DB使用） |
 
 ### スナップショットテスト（`insta` クレート）
 
@@ -745,7 +744,7 @@ DBアクセスの抽象化により、将来的なインメモリキャッシュ
       async fn delete_theme(&self, user_id: u64) -> Result<(), BlazeError>;
   }
   ```
-- 初期実装は `SqliteThemeRepository`（SQLite直叩き）
+- 初期実装は `PgThemeRepository`（PostgreSQL直叩き）
 - 将来的に `moka` 等のインメモリキャッシュを前段に挟む `CachedThemeRepository` に差し替え可能
 
 ### 5. レート制限
