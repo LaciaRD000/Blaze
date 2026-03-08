@@ -11,6 +11,25 @@ pub mod highlight;
 pub mod rasterize;
 pub mod svg_builder;
 
+/// レンダリング時のユーザー設定オプション
+pub struct RenderOptions {
+    pub title_bar_style: String,
+    pub opacity: f64,
+    pub blur_radius: f64,
+    pub show_line_numbers: bool,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            title_bar_style: "macos".to_string(),
+            opacity: 0.75,
+            blur_radius: 8.0,
+            show_line_numbers: false,
+        }
+    }
+}
+
 /// レンダリングパイプラインを統括する構造体
 /// Arc で共有し、複数リクエストで使い回す（読み取り専用、ロック不要）
 pub struct Renderer {
@@ -39,25 +58,58 @@ impl Renderer {
         }
     }
 
-    /// コードを画像化する: highlight → SVG → PNG
+    /// コードを画像化する: highlight → SVG → PNG（デフォルトオプション）
     pub fn render(
         &self,
         code: &str,
         language: Option<&str>,
         theme_name: &str,
     ) -> Result<Vec<u8>, BlazeError> {
-        let svg = self.build_svg_internal(code, language, theme_name)?;
+        self.render_with_options(
+            code,
+            language,
+            theme_name,
+            &RenderOptions::default(),
+        )
+    }
+
+    /// コードを画像化する: highlight → SVG → PNG（オプション指定）
+    pub fn render_with_options(
+        &self,
+        code: &str,
+        language: Option<&str>,
+        theme_name: &str,
+        options: &RenderOptions,
+    ) -> Result<Vec<u8>, BlazeError> {
+        let svg =
+            self.build_svg_internal(code, language, theme_name, options)?;
         rasterize::rasterize(&svg, Arc::clone(&self.font_db))
     }
 
-    /// SVG文字列のみを返す（スナップショットテスト用）
+    /// SVG文字列のみを返す（スナップショットテスト用、デフォルトオプション）
     pub fn render_svg(
         &self,
         code: &str,
         language: Option<&str>,
         theme_name: &str,
     ) -> Result<String, BlazeError> {
-        self.build_svg_internal(code, language, theme_name)
+        self.build_svg_internal(
+            code,
+            language,
+            theme_name,
+            &RenderOptions::default(),
+        )
+    }
+
+    /// SVG文字列のみを返す（オプション指定）
+    pub fn render_svg_with_options(
+        &self,
+        code: &str,
+        language: Option<&str>,
+        theme_name: &str,
+        options: &RenderOptions,
+    ) -> Result<String, BlazeError> {
+        self.build_svg_internal(code, language, theme_name, options)
     }
 
     /// ハイライト → SVG生成の共通処理
@@ -66,6 +118,7 @@ impl Renderer {
         code: &str,
         language: Option<&str>,
         theme_name: &str,
+        render_options: &RenderOptions,
     ) -> Result<String, BlazeError> {
         let theme = self
             .theme_set
@@ -91,18 +144,18 @@ impl Renderer {
         let lines =
             highlight::highlight(code, language, &self.syntax_set, theme);
 
-        let options = svg_builder::SvgOptions {
+        let svg_options = svg_builder::SvgOptions {
             bg_color: &bg_color,
             language,
-            title_bar_style: "macos",
-            opacity: 0.75,
+            title_bar_style: &render_options.title_bar_style,
+            opacity: render_options.opacity as f32,
             background_image: None,
-            blur_radius: 8.0,
+            blur_radius: render_options.blur_radius as f32,
             max_line_length: None,
-            show_line_numbers: false,
+            show_line_numbers: render_options.show_line_numbers,
         };
 
-        Ok(svg_builder::build_svg(&lines, &options))
+        Ok(svg_builder::build_svg(&lines, &svg_options))
     }
 }
 
@@ -188,5 +241,64 @@ mod tests {
             .render("test", Some("rust"), "nonexistent-theme")
             .expect("フォールバックテーマでレンダリングに成功するべき");
         assert!(!png.is_empty());
+    }
+
+    #[test]
+    fn render_with_options_applies_title_bar_style() {
+        let renderer = Renderer::new();
+        let opts = RenderOptions {
+            title_bar_style: "linux".to_string(),
+            ..Default::default()
+        };
+        let svg = renderer
+            .render_svg_with_options(
+                "fn main() {}",
+                Some("rust"),
+                "base16-ocean.dark",
+                &opts,
+            )
+            .expect("SVG生成に成功するべき");
+        assert!(
+            svg.contains("class=\"title-button-close\""),
+            "Linux タイトルバーが適用されるべき"
+        );
+        assert!(
+            !svg.contains(r##"fill="#ff5f57""##),
+            "macOS の赤丸が含まれないべき"
+        );
+    }
+
+    #[test]
+    fn render_with_options_applies_opacity() {
+        let renderer = Renderer::new();
+        let opts = RenderOptions {
+            opacity: 0.5,
+            ..Default::default()
+        };
+        let svg = renderer
+            .render_svg_with_options("test", None, "base16-ocean.dark", &opts)
+            .expect("SVG生成に成功するべき");
+        assert!(
+            svg.contains("fill-opacity=\"0.5\""),
+            "指定した opacity が適用されるべき"
+        );
+    }
+
+    #[test]
+    fn render_with_options_applies_line_numbers() {
+        let renderer = Renderer::new();
+        let opts = RenderOptions {
+            show_line_numbers: true,
+            ..Default::default()
+        };
+        let svg = renderer
+            .render_svg_with_options(
+                "line1\nline2",
+                None,
+                "base16-ocean.dark",
+                &opts,
+            )
+            .expect("SVG生成に成功するべき");
+        assert!(svg.contains(">1</text>"), "行番号が表示されるべき");
     }
 }

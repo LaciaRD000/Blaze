@@ -137,9 +137,20 @@ pub async fn render_message(
     let code = code_block.code.clone();
     let language = code_block.language.clone();
     let theme_name = theme.color_scheme.clone();
+    let render_options = crate::renderer::RenderOptions {
+        title_bar_style: theme.title_bar_style.clone(),
+        opacity: theme.opacity,
+        blur_radius: theme.blur_radius,
+        show_line_numbers: theme.show_line_numbers != 0,
+    };
 
     let png = tokio::task::spawn_blocking(move || {
-        renderer.render(&code, language.as_deref(), &theme_name)
+        renderer.render_with_options(
+            &code,
+            language.as_deref(),
+            &theme_name,
+            &render_options,
+        )
     })
     .await
     .map_err(|e| BlazeError::rendering(e.to_string()))??;

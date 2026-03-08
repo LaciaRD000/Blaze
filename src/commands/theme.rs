@@ -131,9 +131,20 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
 
     let renderer = std::sync::Arc::clone(&ctx.data().renderer);
     let theme_name = theme.color_scheme.clone();
+    let render_options = crate::renderer::RenderOptions {
+        title_bar_style: theme.title_bar_style.clone(),
+        opacity: theme.opacity,
+        blur_radius: theme.blur_radius,
+        show_line_numbers: theme.show_line_numbers != 0,
+    };
 
     let png = tokio::task::spawn_blocking(move || {
-        renderer.render(PREVIEW_CODE, Some("rust"), &theme_name)
+        renderer.render_with_options(
+            PREVIEW_CODE,
+            Some("rust"),
+            &theme_name,
+            &render_options,
+        )
     })
     .await
     .map_err(|e| BlazeError::rendering(e.to_string()))??;
