@@ -127,6 +127,7 @@ pub async fn render_message(
         } else {
             Some(theme.background_id.clone())
         },
+        scale: theme.render_scale as f32,
     };
 
     let png = tokio::task::spawn_blocking(move || {

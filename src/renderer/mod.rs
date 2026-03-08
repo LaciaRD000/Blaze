@@ -28,6 +28,8 @@ pub struct RenderOptions {
     pub max_line_length: Option<usize>,
     /// 背景画像ID。None で背景なし
     pub background_image: Option<String>,
+    /// レンダリングスケール（1.0 = 等倍、2.0 = 高解像度）
+    pub scale: f32,
 }
 
 impl Default for RenderOptions {
@@ -39,6 +41,7 @@ impl Default for RenderOptions {
             show_line_numbers: false,
             max_line_length: None,
             background_image: None,
+            scale: 2.0,
         }
     }
 }
@@ -136,9 +139,14 @@ impl Renderer {
                 bg_pixmap,
                 options.blur_radius,
                 blur_margin,
+                options.scale,
             )
         } else {
-            rasterize::rasterize(&svg, Arc::clone(&self.font_db))
+            rasterize::rasterize(
+                &svg,
+                Arc::clone(&self.font_db),
+                options.scale,
+            )
         }
     }
 

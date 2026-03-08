@@ -38,6 +38,7 @@ pub struct RenderJobOptions {
     pub show_line_numbers: bool,
     pub max_line_length: Option<usize>,
     pub background_image: Option<String>,
+    pub scale: f32,
 }
 
 /// Worker → Gateway: レンダリング結果
@@ -89,6 +90,7 @@ mod tests {
                 show_line_numbers: false,
                 max_line_length: Some(120),
                 background_image: Some("gradient".into()),
+                scale: 2.0,
             },
         );
         let job2 = RenderJob::new(
@@ -102,6 +104,7 @@ mod tests {
                 show_line_numbers: false,
                 max_line_length: Some(120),
                 background_image: Some("gradient".into()),
+                scale: 2.0,
             },
         );
         assert_ne!(job1.job_id, job2.job_id);
@@ -121,6 +124,7 @@ mod tests {
                 show_line_numbers: false,
                 max_line_length: None,
                 background_image: None,
+                scale: 2.0,
             },
         };
         assert_eq!(job.result_key(), "blaze:results:abc-123");
@@ -139,6 +143,7 @@ mod tests {
                 show_line_numbers: true,
                 max_line_length: Some(80),
                 background_image: Some("denim".into()),
+                scale: 2.0,
             },
         );
         let json = serde_json::to_string(&job).expect("シリアライズ成功");
