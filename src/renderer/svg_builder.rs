@@ -40,10 +40,9 @@ impl Default for SvgOptions<'_> {
 pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
     let window_width = 800.0;
     let code_height = PADDING_Y * 2.0 + LINE_HEIGHT * lines.len() as f32;
-    let title_bar_h = if options.title_bar_style == "none" {
-        0.0
-    } else {
-        TITLE_BAR_HEIGHT
+    let title_bar_h = match options.title_bar_style {
+        "macos" | "linux" => TITLE_BAR_HEIGHT,
+        _ => 0.0,
     };
     let window_height = title_bar_h + code_height;
 
@@ -97,8 +96,12 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
     );
 
     // タイトルバー
-    if options.title_bar_style == "macos" {
-        build_macos_title_bar(&mut svg, options.language);
+    match options.title_bar_style {
+        "macos" => build_macos_title_bar(&mut svg, options.language),
+        "linux" => {
+            build_linux_title_bar(&mut svg, window_width, options.language)
+        }
+        _ => {} // "none" 等
     }
 
     // コード行
@@ -164,6 +167,46 @@ fn build_macos_title_bar(svg: &mut String, language: Option<&str>) {
             r##"<text x="400" y="22" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="13" fill="#6c7086" text-anchor="middle">{escaped_lang}</text>"##
         );
     }
+}
+
+/// Linux WM 風タイトルバー（右上に四角いボタン + 言語名）
+fn build_linux_title_bar(
+    svg: &mut String,
+    window_width: f32,
+    language: Option<&str>,
+) {
+    // 言語名テキスト（左寄せ）
+    if let Some(lang) = language {
+        let escaped_lang = escape_for_svg(lang);
+        let _ = write!(
+            svg,
+            r##"<text x="16" y="22" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="13" fill="#6c7086">{escaped_lang}</text>"##
+        );
+    }
+
+    // 右上のボタン（最小化・最大化・閉じる）
+    let button_size: f32 = 10.0;
+    let button_spacing: f32 = 20.0;
+    let button_y: f32 = 13.0;
+    let close_x = window_width - 24.0;
+    let maximize_x = close_x - button_spacing;
+    let minimize_x = maximize_x - button_spacing;
+
+    // 最小化ボタン
+    let _ = write!(
+        svg,
+        r##"<rect class="title-button" x="{minimize_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="#6c7086" rx="2"/>"##
+    );
+    // 最大化ボタン
+    let _ = write!(
+        svg,
+        r##"<rect class="title-button" x="{maximize_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="#6c7086" rx="2"/>"##
+    );
+    // 閉じるボタン
+    let _ = write!(
+        svg,
+        r##"<rect class="title-button" x="{close_x}" y="{button_y}" width="{button_size}" height="{button_size}" fill="#6c7086" rx="2"/>"##
+    );
 }
 
 #[cfg(test)]
@@ -351,6 +394,38 @@ mod tests {
         assert!(
             svg.contains("fill-opacity=\"0.75\""),
             "fill-opacity が含まれるべき"
+        );
+    }
+
+    #[test]
+    fn build_svg_linux_title_bar_has_buttons() {
+        let opts = SvgOptions {
+            title_bar_style: "linux",
+            ..default_options()
+        };
+        let svg = build_svg(&sample_lines(), &opts);
+        // Linux風は四角いボタン（rect要素）で閉じる・最大化・最小化を描画
+        assert!(
+            svg.contains("class=\"title-button\""),
+            "Linux風タイトルバーにはボタンが含まれるべき"
+        );
+        // macOS 風の circle は含まれないべき
+        assert!(
+            !svg.contains("<circle"),
+            "Linux風タイトルバーにはcircleがないべき"
+        );
+    }
+
+    #[test]
+    fn build_svg_linux_title_bar_has_language_name() {
+        let opts = SvgOptions {
+            title_bar_style: "linux",
+            ..default_options()
+        };
+        let svg = build_svg(&sample_lines(), &opts);
+        assert!(
+            svg.contains(">rust</text>"),
+            "Linux風でも言語名が含まれるべき"
         );
     }
 
