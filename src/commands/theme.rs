@@ -13,6 +13,8 @@ pub enum TitleBarStyle {
     Macos,
     #[name = "linux"]
     Linux,
+    #[name = "plain"]
+    Plain,
     #[name = "none"]
     None,
 }
@@ -132,6 +134,7 @@ pub async fn set(
         theme.title_bar_style = match tb {
             TitleBarStyle::Macos => "macos".to_string(),
             TitleBarStyle::Linux => "linux".to_string(),
+            TitleBarStyle::Plain => "plain".to_string(),
             TitleBarStyle::None => "none".to_string(),
         };
     }

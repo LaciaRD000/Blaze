@@ -80,7 +80,7 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
     let window_width = 800.0;
     let code_height = PADDING_Y * 2.0 + LINE_HEIGHT * lines.len() as f64;
     let title_bar_h = match options.title_bar_style {
-        "macos" | "linux" => TITLE_BAR_HEIGHT,
+        "macos" | "linux" | "plain" => TITLE_BAR_HEIGHT,
         _ => 0.0,
     };
     let window_height = title_bar_h + code_height;
@@ -140,7 +140,8 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
         "linux" => {
             build_linux_title_bar(&mut svg, window_width, options.language)
         }
-        _ => {} // "none" 等
+        "plain" => build_plain_title_bar(&mut svg, options.language),
+        _ => {} // "none": タイトルバーなし
     }
 
     // コード行
@@ -213,6 +214,17 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
 
     svg.push_str("</svg>");
     svg
+}
+
+/// プレーンタイトルバー（ボタンなし、言語名のみ中央表示）
+fn build_plain_title_bar(svg: &mut String, language: Option<&str>) {
+    if let Some(lang) = language {
+        let escaped_lang = escape_for_svg(lang);
+        let _ = write!(
+            svg,
+            r##"<text x="400" y="22" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="13" fill="#6c7086" text-anchor="middle">{escaped_lang}</text>"##
+        );
+    }
 }
 
 /// macOS風タイトルバー（赤・黄・緑の円ボタン + 言語名）

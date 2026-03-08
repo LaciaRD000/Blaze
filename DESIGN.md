@@ -509,7 +509,7 @@ pub async fn reset(ctx: Context<'_>) -> Result<(), Error> { /* DB削除 */ }
   <g filter="url(#shadow)">
     <rect rx="12" fill="rgba(30,30,46,{opacity})" clip-path="url(#rounded)" />
 
-    <!-- タイトルバー (macos: 円ボタン / linux: GNOME風ボタン / none: 省略) -->
+    <!-- タイトルバー (macos: 円ボタン / linux: GNOME風ボタン / plain: 言語名のみ / none: 省略) -->
     <circle cx="20" cy="16" r="6" fill="#ff5f57" />  <!-- 閉じる -->
     <circle cx="38" cy="16" r="6" fill="#febc2e" />  <!-- 最小化 -->
     <circle cx="56" cy="16" r="6" fill="#28c840" />  <!-- 最大化 -->
