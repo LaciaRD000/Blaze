@@ -33,7 +33,7 @@
 - [ ] 半透明ウィンドウ矩形（fill-opacity）
 - [ ] タイトルバー（macOS風 / Linux風）
 - [ ] 角丸 + ドロップシャドウ
-- [ ] フォント埋め込み（Fira Code + PlemolJP）
+- [x] フォント埋め込み（Fira Code + PlemolJP）
 
 ## Phase 4: テーマ管理 + DB
 

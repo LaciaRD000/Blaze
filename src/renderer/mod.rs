@@ -28,12 +28,13 @@ impl Renderer {
     pub fn new() -> Self {
         let syntax_set = SyntaxSet::load_defaults_newlines();
         let theme_set = ThemeSet::load_defaults();
-        let font_db = Arc::new(usvg::fontdb::Database::new());
+        let mut font_db = usvg::fontdb::Database::new();
+        load_fonts(&mut font_db);
 
         Self {
             syntax_set,
             theme_set,
-            font_db,
+            font_db: Arc::new(font_db),
         }
     }
 
@@ -113,6 +114,16 @@ impl Renderer {
     }
 }
 
+/// フォント読み込み（include_bytes! による静的埋め込み）
+fn load_fonts(font_db: &mut usvg::fontdb::Database) {
+    font_db.load_font_data(
+        include_bytes!("../../assets/fonts/FiraCode-Regular.ttf").to_vec(),
+    );
+    font_db.load_font_data(
+        include_bytes!("../../assets/fonts/PlemolJP-Regular.ttf").to_vec(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +164,28 @@ mod tests {
             .render_svg(code, Some("rust"), "base16-ocean.dark")
             .expect("SVG生成に成功するべき");
         insta::assert_snapshot!(svg);
+    }
+
+    #[test]
+    fn font_db_contains_fira_code() {
+        let renderer = Renderer::new();
+        let has_fira = renderer.font_db.faces().any(|face| {
+            face.families
+                .iter()
+                .any(|(name, _)| name.contains("Fira Code"))
+        });
+        assert!(has_fira, "Fira Code フォントが登録されているべき");
+    }
+
+    #[test]
+    fn font_db_contains_plemoljp() {
+        let renderer = Renderer::new();
+        let has_plemol = renderer.font_db.faces().any(|face| {
+            face.families
+                .iter()
+                .any(|(name, _)| name.contains("PlemolJP"))
+        });
+        assert!(has_plemol, "PlemolJP フォントが登録されているべき");
     }
 
     #[test]
