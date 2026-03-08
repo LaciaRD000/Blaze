@@ -92,7 +92,8 @@ async fn main() {
     let token = std::env::var("DISCORD_TOKEN")
         .expect("DISCORD_TOKEN 環境変数が設定されていません");
 
-    let intents = serenity::GatewayIntents::non_privileged();
+    let intents = serenity::GatewayIntents::non_privileged()
+        | serenity::GatewayIntents::MESSAGE_CONTENT;
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
