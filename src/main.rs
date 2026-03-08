@@ -40,7 +40,7 @@ async fn on_error(error: poise::FrameworkError<'_, Data, BlazeError>) {
                 BlazeError::Database(_)
                 | BlazeError::Rendering { .. }
                 | BlazeError::Config(_) => {
-                    eprintln!("内部エラー: {error:?}");
+                    tracing::error!("内部エラー: {error:?}");
                     "内部エラーが発生しました。しばらくしてからお試しください。"
                         .to_string()
                 }
@@ -70,6 +70,16 @@ async fn main() {
         .expect("config/default.toml のパースに失敗");
     settings.apply_env_overrides();
     settings.validate().expect("設定値のバリデーションに失敗");
+
+    // ロギング初期化
+    let log_filter = settings.log_level.clone();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_new(&log_filter)
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let settings = Arc::new(settings);
 
     // データベース接続
@@ -101,7 +111,7 @@ async fn main() {
                 )
                 .await?;
                 let renderer = Arc::new(renderer::Renderer::new());
-                println!("Bot が起動しました");
+                tracing::info!("Bot が起動しました");
                 let render_semaphore = Arc::new(tokio::sync::Semaphore::new(
                     settings.max_concurrent_renders,
                 ));
@@ -133,11 +143,11 @@ async fn main() {
         tokio::signal::ctrl_c()
             .await
             .expect("シグナルハンドラの登録に失敗");
-        println!("シャットダウン中...");
+        tracing::info!("シャットダウン中...");
         shard_manager.shutdown_all().await;
     });
 
     if let Err(e) = client.start().await {
-        eprintln!("Bot エラー: {e:?}");
+        tracing::error!("Bot エラー: {e:?}");
     }
 }

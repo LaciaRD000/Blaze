@@ -33,7 +33,7 @@ unicode-normalization = "0.1"
 
 # ロギング・監視
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json"] }
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 # ユーティリティ
 dotenvy = "0.15"
