@@ -99,6 +99,7 @@ impl Renderer {
             background_image: None,
             blur_radius: 8.0,
             max_line_length: None,
+            show_line_numbers: false,
         };
 
         Ok(svg_builder::build_svg(&lines, &options))

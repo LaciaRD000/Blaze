@@ -23,6 +23,8 @@ pub struct SvgOptions<'a> {
     pub blur_radius: f32,
     /// 1行あたりの最大文字数。超過分は `…` でトリミング。None で無制限
     pub max_line_length: Option<usize>,
+    /// 行番号を表示するか
+    pub show_line_numbers: bool,
 }
 
 impl Default for SvgOptions<'_> {
@@ -35,9 +37,13 @@ impl Default for SvgOptions<'_> {
             background_image: None,
             blur_radius: 8.0,
             max_line_length: None,
+            show_line_numbers: false,
         }
     }
 }
+
+/// 行番号の表示幅（文字数に応じた余白）
+const LINE_NUMBER_WIDTH: f32 = 40.0;
 
 /// トークン列を max_line_length に基づいてトリミングする
 fn trim_tokens(
@@ -138,11 +144,26 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
     }
 
     // コード行
+    let code_x = if options.show_line_numbers {
+        PADDING_X + LINE_NUMBER_WIDTH
+    } else {
+        PADDING_X
+    };
     for (i, line) in lines.iter().enumerate() {
         let y = title_bar_h + PADDING_Y + FONT_SIZE + LINE_HEIGHT * i as f32;
+
+        // 行番号
+        if options.show_line_numbers {
+            let line_num = i + 1;
+            let _ = write!(
+                svg,
+                r##"<text x="{PADDING_X}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" fill="#6c7086" text-anchor="start">{line_num}</text>"##
+            );
+        }
+
         let _ = write!(
             svg,
-            r##"<text x="{PADDING_X}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" xml:space="preserve">"##
+            r##"<text x="{code_x}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" xml:space="preserve">"##
         );
 
         // max_line_length が指定されている場合はトリミング
@@ -309,6 +330,7 @@ mod tests {
             background_image: None,
             blur_radius: 8.0,
             max_line_length: None,
+            show_line_numbers: false,
         }
     }
 
@@ -571,6 +593,30 @@ mod tests {
             "制限内の行はそのまま含まれるべき"
         );
         assert!(!svg.contains("…"), "制限内の行には省略記号がないべき");
+    }
+
+    #[test]
+    fn build_svg_with_line_numbers_shows_numbers() {
+        let opts = SvgOptions {
+            show_line_numbers: true,
+            ..default_options()
+        };
+        let svg = build_svg(&sample_lines(), &opts);
+        // 行番号 "1" と "2" が含まれるべき
+        assert!(svg.contains(">1</text>"), "行番号1が含まれるべき");
+        assert!(svg.contains(">2</text>"), "行番号2が含まれるべき");
+    }
+
+    #[test]
+    fn build_svg_without_line_numbers_has_no_numbers() {
+        let svg = build_svg(&sample_lines(), &default_options());
+        // 行番号用の薄い色テキストが含まれないべき
+        // （コード内に "1" が含まれる可能性があるので、行番号専用の色で確認）
+        let line_number_pattern = "fill=\"#6c7086\" text-anchor=\"start\">";
+        assert!(
+            !svg.contains(line_number_pattern),
+            "行番号OFFでは行番号要素がないべき"
+        );
     }
 
     /// SVGからheight属性の数値を抽出するヘルパー
