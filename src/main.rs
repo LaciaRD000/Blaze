@@ -66,8 +66,9 @@ async fn main() {
     // 設定ファイル読み込み
     let settings_str = std::fs::read_to_string("config/default.toml")
         .expect("config/default.toml の読み込みに失敗");
-    let settings: Settings = toml::from_str(&settings_str)
+    let mut settings: Settings = toml::from_str(&settings_str)
         .expect("config/default.toml のパースに失敗");
+    settings.apply_env_overrides();
     settings.validate().expect("設定値のバリデーションに失敗");
     let settings = Arc::new(settings);
 

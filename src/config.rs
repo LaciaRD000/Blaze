@@ -13,6 +13,38 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// `BLAZE_*` 環境変数で設定値をオーバーライドする
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(v) = std::env::var("BLAZE_MAX_CODE_LINES")
+            && let Ok(n) = v.parse()
+        {
+            self.max_code_lines = n;
+        }
+        if let Ok(v) = std::env::var("BLAZE_MAX_CODE_CHARS")
+            && let Ok(n) = v.parse()
+        {
+            self.max_code_chars = n;
+        }
+        if let Ok(v) = std::env::var("BLAZE_MAX_LINE_LENGTH")
+            && let Ok(n) = v.parse()
+        {
+            self.max_line_length = n;
+        }
+        if let Ok(v) = std::env::var("BLAZE_RATE_LIMIT_PER_MINUTE")
+            && let Ok(n) = v.parse()
+        {
+            self.rate_limit_per_minute = n;
+        }
+        if let Ok(v) = std::env::var("BLAZE_MAX_CONCURRENT_RENDERS")
+            && let Ok(n) = v.parse()
+        {
+            self.max_concurrent_renders = n;
+        }
+        if let Ok(v) = std::env::var("BLAZE_LOG_LEVEL") {
+            self.log_level = v;
+        }
+    }
+
     /// 設定値の範囲を検証する。Bot起動時に呼び出し、不正値なら即座にパニックさせる
     pub fn validate(&self) -> Result<(), BlazeError> {
         if self.max_code_lines == 0 || self.max_code_lines > 500 {
@@ -156,5 +188,33 @@ mod tests {
             settings.log_level = level.to_string();
             assert!(settings.validate().is_ok(), "{level} は有効なログレベル");
         }
+    }
+
+    // 環境変数テストは並行実行時に競合するため、
+    // 1つのテストにまとめて直列実行する
+    #[test]
+    fn apply_env_overrides_works() {
+        // SAFETY: テスト環境でのみ使用
+        // テスト1: 数値オーバーライド
+        unsafe { std::env::set_var("BLAZE_MAX_CODE_LINES", "200") };
+        let mut settings = default_settings();
+        settings.apply_env_overrides();
+        assert_eq!(settings.max_code_lines, 200);
+        unsafe { std::env::remove_var("BLAZE_MAX_CODE_LINES") };
+
+        // テスト2: 文字列オーバーライド
+        unsafe { std::env::set_var("BLAZE_LOG_LEVEL", "debug") };
+        let mut settings = default_settings();
+        settings.apply_env_overrides();
+        assert_eq!(settings.log_level, "debug");
+        unsafe { std::env::remove_var("BLAZE_LOG_LEVEL") };
+
+        // テスト3: 不正な数値は無視
+        unsafe { std::env::set_var("BLAZE_MAX_CODE_CHARS", "not_a_number") };
+        let mut settings = default_settings();
+        let original = settings.max_code_chars;
+        settings.apply_env_overrides();
+        assert_eq!(settings.max_code_chars, original);
+        unsafe { std::env::remove_var("BLAZE_MAX_CODE_CHARS") };
     }
 }
