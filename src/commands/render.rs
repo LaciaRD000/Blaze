@@ -43,8 +43,8 @@ pub fn extract_code_block(content: &str) -> Option<CodeBlock> {
     Some(CodeBlock { language, code })
 }
 
-/// コンテキストメニュー「ターミナル画像化」のスタブ実装
-/// Phase 2 で実画像生成に置き換える
+/// コンテキストメニュー「ターミナル画像化」
+/// Phase 2 で実画像生成に接続する。現在はスタブ（テキスト返信）。
 #[poise::command(
     context_menu_command = "ターミナル画像化",
     category = "Render"
@@ -53,9 +53,49 @@ pub async fn render_message(
     ctx: Context<'_>,
     #[description = "対象メッセージ"] msg: serenity::Message,
 ) -> Result<(), Error> {
-    // スタブ: コードブロックの内容をテキストで返す
-    let _ = msg;
-    ctx.say("render_message スタブ").await?;
+    // 1. コードブロック抽出
+    let code_block = match extract_code_block(&msg.content) {
+        Some(block) => block,
+        None => {
+            ctx.send(
+                poise::CreateReply::default()
+                    .content("メッセージ内に ``` で囲まれたコードブロックが見つかりませんでした")
+                    .ephemeral(true),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // 2. 入力バリデーション
+    let settings = &ctx.data().settings;
+    if code_block.code.lines().count() > settings.max_code_lines
+        || code_block.code.len() > settings.max_code_chars
+    {
+        ctx.send(
+            poise::CreateReply::default()
+                .content(format!(
+                    "コードが長すぎます（上限: {}行 / {}文字）",
+                    settings.max_code_lines, settings.max_code_chars
+                ))
+                .ephemeral(true),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // バリデーション通過 — ここから時間がかかるので defer する（非エフェメラル）
+    ctx.defer().await?;
+
+    // 3. 入力サニタイズ
+    let code_block = code_block.sanitized();
+
+    // 4. スタブ: 画像の代わりにコードブロックの内容をテキストで返す
+    let lang = code_block.language.as_deref().unwrap_or("text");
+    let response =
+        format!("**言語**: {}\n```{}\n{}\n```", lang, lang, code_block.code);
+    ctx.send(poise::CreateReply::default().content(response))
+        .await?;
     Ok(())
 }
 

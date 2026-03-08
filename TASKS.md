@@ -16,7 +16,7 @@
 - [x] main.rs: poise Framework 起動 + Graceful Shutdown
 - [x] extract_code_block() 実装 + テスト
 - [x] sanitize_code() / escape_for_svg() 実装 + テスト
-- [ ] render_message コンテキストメニューコマンド（画像生成はスタブ、コードブロック抽出まで）
+- [x] render_message コンテキストメニューコマンド（画像生成はスタブ、コードブロック抽出まで）
 
 ## Phase 2: シンタックスハイライト + SVG生成 + PNG変換
 
