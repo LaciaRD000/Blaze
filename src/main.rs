@@ -13,12 +13,12 @@ use config::Settings;
 use error::BlazeError;
 
 /// Bot の共有データ。poise Framework の `Data` 型として使用する。
-/// 後のフェーズで rate_limiter を追加する。
 pub struct Data {
     pub settings: Arc<Settings>,
     pub renderer: Arc<renderer::Renderer>,
     pub db: sqlx::SqlitePool,
     pub render_semaphore: Arc<tokio::sync::Semaphore>,
+    pub rate_limiter: Arc<governor::DefaultKeyedRateLimiter<u64>>,
 }
 
 type Error = BlazeError;
@@ -104,11 +104,18 @@ async fn main() {
                 let render_semaphore = Arc::new(tokio::sync::Semaphore::new(
                     settings.max_concurrent_renders,
                 ));
+                let quota = governor::Quota::per_minute(
+                    std::num::NonZeroU32::new(settings.rate_limit_per_minute)
+                        .expect("rate_limit_per_minute は 0 でないべき"),
+                );
+                let rate_limiter =
+                    Arc::new(governor::RateLimiter::keyed(quota));
                 Ok(Data {
                     settings,
                     renderer,
                     db,
                     render_semaphore,
+                    rate_limiter,
                 })
             })
         })

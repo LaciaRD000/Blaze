@@ -58,6 +58,23 @@ pub async fn render_message(
     ctx: Context<'_>,
     #[description = "対象メッセージ"] msg: serenity::Message,
 ) -> Result<(), Error> {
+    // 0. レート制限チェック
+    let user_id_for_rate = ctx.author().id.get();
+    if ctx
+        .data()
+        .rate_limiter
+        .check_key(&user_id_for_rate)
+        .is_err()
+    {
+        ctx.send(
+            poise::CreateReply::default()
+                .content("レート制限に達しました。しばらくお待ちください。")
+                .ephemeral(true),
+        )
+        .await?;
+        return Ok(());
+    }
+
     // 1. コードブロック抽出
     let code_block = match extract_code_block(&msg.content) {
         Some(block) => block,
