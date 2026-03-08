@@ -15,6 +15,15 @@ pub enum TitleBarStyle {
     Linux,
 }
 
+/// フォントの選択肢
+#[derive(Debug, Clone, poise::ChoiceParameter)]
+pub enum FontChoice {
+    #[name = "Fira Code"]
+    FiraCode,
+    #[name = "PlemolJP"]
+    PlemolJP,
+}
+
 /// テーマ設定を変更
 #[poise::command(slash_command, subcommands("set", "preview", "reset"))]
 pub async fn theme(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
@@ -30,7 +39,7 @@ pub async fn set(
     #[description = "ぼかし強度 (0-30)"] blur: Option<f64>,
     #[description = "不透明度 (0.3-1.0)"] opacity: Option<f64>,
     #[description = "タイトルバー"] title_bar: Option<TitleBarStyle>,
-    #[description = "フォント (FiraCode/PlemolJP)"] font: Option<String>,
+    #[description = "フォント"] font: Option<FontChoice>,
     #[description = "行番号表示 (true/false)"] show_line_numbers: Option<bool>,
 ) -> Result<(), Error> {
     // パラメータバリデーション
@@ -47,14 +56,6 @@ pub async fn set(
         return Err(BlazeError::InvalidTheme(
             "不透明度は 0.3〜1.0 の範囲で指定してください".to_string(),
         ));
-    }
-    if let Some(ref f) = font
-        && f != "Fira Code"
-        && f != "PlemolJP"
-    {
-        return Err(BlazeError::InvalidTheme(format!(
-            "フォントは 'Fira Code' または 'PlemolJP' を指定してください: {f}"
-        )));
     }
     if let Some(ref cs) = color_scheme {
         // syntect のテーマに存在するか確認
@@ -109,7 +110,10 @@ pub async fn set(
         };
     }
     if let Some(f) = font {
-        theme.font_family = f;
+        theme.font_family = match f {
+            FontChoice::FiraCode => "Fira Code".to_string(),
+            FontChoice::PlemolJP => "PlemolJP".to_string(),
+        };
     }
     if let Some(sln) = show_line_numbers {
         theme.show_line_numbers = if sln { 1 } else { 0 };
