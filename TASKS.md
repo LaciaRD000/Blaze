@@ -13,7 +13,7 @@
 - [x] Cargo.toml に依存クレートを追加
 - [x] config/default.toml 作成、Settings 構造体実装
 - [x] BlazeError 独自エラー型実装
-- [ ] main.rs: poise Framework 起動 + Graceful Shutdown
+- [x] main.rs: poise Framework 起動 + Graceful Shutdown
 - [x] extract_code_block() 実装 + テスト
 - [x] sanitize_code() / escape_for_svg() 実装 + テスト
 - [ ] render_message コンテキストメニューコマンド（画像生成はスタブ、コードブロック抽出まで）

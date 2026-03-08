@@ -1,6 +1,8 @@
+use poise::serenity_prelude as serenity;
 use regex::Regex;
 
 use crate::sanitize::sanitize_code;
+use crate::{Context, Error};
 
 pub struct CodeBlock {
     pub language: Option<String>,
@@ -39,6 +41,22 @@ pub fn extract_code_block(content: &str) -> Option<CodeBlock> {
         .unwrap_or_default();
 
     Some(CodeBlock { language, code })
+}
+
+/// コンテキストメニュー「ターミナル画像化」のスタブ実装
+/// Phase 2 で実画像生成に置き換える
+#[poise::command(
+    context_menu_command = "ターミナル画像化",
+    category = "Render"
+)]
+pub async fn render_message(
+    ctx: Context<'_>,
+    #[description = "対象メッセージ"] msg: serenity::Message,
+) -> Result<(), Error> {
+    // スタブ: コードブロックの内容をテキストで返す
+    let _ = msg;
+    ctx.say("render_message スタブ").await?;
+    Ok(())
 }
 
 #[cfg(test)]

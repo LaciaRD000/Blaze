@@ -39,6 +39,15 @@ impl From<syntect::Error> for BlazeError {
     }
 }
 
+impl From<poise::serenity_prelude::Error> for BlazeError {
+    fn from(e: poise::serenity_prelude::Error) -> Self {
+        BlazeError::Rendering {
+            message: format!("Discord エラー: {e}"),
+            source: Some(Box::new(e)),
+        }
+    }
+}
+
 impl BlazeError {
     /// ソースエラーなしのレンダリングエラーを作成する
     pub fn rendering(message: impl Into<String>) -> Self {
