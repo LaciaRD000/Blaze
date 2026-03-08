@@ -5,7 +5,7 @@ Discord 上のコードブロックを、SwayFX/Wezterm 風のターミナルウ
 外部 API に依存せず、Rust 内部でネイティブにレンダリングを行うため、高速かつセキュアに動作します。
 
 ![Rust](https://img.shields.io/badge/Rust-2024_Edition-orange)
-![License](https://img.shields.io/badge/license-MIT-blue)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 
 ## 特徴
 
@@ -34,8 +34,8 @@ Discord 上のコードブロックを、SwayFX/Wezterm 風のターミナルウ
 
 | パラメータ | 選択肢 | デフォルト |
 |-----------|--------|-----------|
-| `color_scheme` | base16-ocean.dark, base16-eighties.dark, base16-mocha.dark, base16-ocean.light, InspiredGitHub, Solarized (dark/light) | base16-ocean.dark |
-| `background` | なし / グラデーション | なし |
+| `color_scheme` | base16-ocean.dark, base16-eighties.dark, base16-mocha.dark, base16-ocean.light, InspiredGitHub, Solarized (dark/light) | base16-eighties.dark |
+| `background` | none / gradient / denim / repeated-square-dark | gradient |
 | `blur` | 0.0 〜 30.0 | 8.0 |
 | `opacity` | 0.3 〜 1.0 | 0.75 |
 | `title_bar` | macOS / linux / plain / none | macOS |
@@ -49,6 +49,7 @@ Discord 上のコードブロックを、SwayFX/Wezterm 風のターミナルウ
 - Rust nightly toolchain
 - PostgreSQL（Supabase 推奨）
 - Discord Bot トークン（MESSAGE_CONTENT Intent が必要）
+- Redis（マイクロサービスモード時のみ）
 
 ### 環境変数
 
@@ -57,20 +58,48 @@ Discord 上のコードブロックを、SwayFX/Wezterm 風のターミナルウ
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 DATABASE_URL=postgresql://user:pass@host:port/db
+REDIS_URL=redis://127.0.0.1/        # マイクロサービスモード時のみ
 ```
 
-### ビルド & 実行
+### 起動方法
+
+2つのデプロイモードから選択できます。
+
+#### モノリスモード（シンプル構成）
+
+1プロセスで Discord I/O + レンダリングを実行します。Redis 不要。
 
 ```bash
-# ビルド
-cargo build
-
-# マイグレーション実行（sqlx-cli が必要）
-sqlx migrate run
-
-# 実行
 cargo run
 ```
+
+#### マイクロサービスモード（スケーラブル構成）
+
+Discord I/O（Gateway）と CPU バウンドなレンダリング（Worker）を別プロセスに分離します。
+Worker のクラッシュが Discord 接続に影響せず、Worker を複数起動して水平スケール可能です。
+
+```bash
+# 1. Redis を起動
+redis-server --daemonize yes
+
+# 2. 起動スクリプト（Gateway 1台 + Worker 4台）
+./scripts/start-microservices.sh
+
+# Worker 数を指定する場合
+./scripts/start-microservices.sh 8
+```
+
+個別に起動する場合:
+
+```bash
+# ターミナル 1 — Worker（複数起動可）
+cargo run --bin blaze-worker
+
+# ターミナル 2 — Gateway
+cargo run --bin blaze-gateway
+```
+
+`Ctrl+C` で全プロセスを一括停止します。
 
 ### 設定ファイル
 
@@ -97,6 +126,8 @@ cargo fmt                      # フォーマット（nightly 必須）
 
 ## アーキテクチャ
 
+### モノリスモード
+
 ```
 Discord メッセージ
   → コードブロック抽出（正規表現）
@@ -107,6 +138,20 @@ Discord メッセージ
   → Discord にリプライ送信
 ```
 
+### マイクロサービスモード
+
+```
+ユーザー → Discord → Gateway (バリデーション・テーマ取得)
+                        ↓ LPUSH
+                      Redis (blaze:jobs)
+                        ↓ BRPOP
+                     Worker (レンダリング)
+                        ↓ LPUSH
+                      Redis (blaze:results:{job_id})
+                        ↓ BRPOP
+                     Gateway → Discord → ユーザー
+```
+
 詳細は [DESIGN.md](DESIGN.md)・[SPEC.md](SPEC.md) を参照してください。
 
 ## 技術スタック
@@ -115,9 +160,10 @@ Discord メッセージ
 |---------|------|
 | 言語 | Rust (Edition 2024) |
 | Discord | poise / serenity |
-| 構文解析 | syntect |
-| 画像生成 | resvg / tiny-skia |
+| 構文解析 | syntect (ビルド時 packdump) |
+| 画像生成 | resvg / tiny-skia / image |
 | DB | PostgreSQL / Supabase (sqlx) |
+| メッセージキュー | Redis |
 | エラー処理 | thiserror |
 | レート制限 | governor |
 | ロギング | tracing |
