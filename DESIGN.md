@@ -771,6 +771,8 @@ regex = "1"
 [build-dependencies]
 # ビルド時に SyntaxSet/ThemeSet の packdump を生成
 syntect = { version = "5", features = ["default-syntaxes", "default-themes", "dump-create", "dump-load", "regex-onig"] }
+# デフォルトに含まれないモダン言語の構文定義を追加（TypeScript, Kotlin, TOML 等 80+言語）
+two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
 
 [dev-dependencies]
 insta = "1"            # スナップショットテスト
@@ -803,7 +805,7 @@ insta = "1"            # スナップショットテスト
 
 ## 設計上のポイント
 
-- **syntect Binary Dump (`build.rs`)**: `build.rs` がビルド時に `SyntaxSet::load_defaults_newlines()` / `ThemeSet::load_defaults()` を実行し、非圧縮 packdump ファイルを `OUT_DIR` に生成する。ランタイムでは `syntect::dumps::from_uncompressed_data()` で読み込むことで、起動時の解凍処理を省略する。将来的には `build.rs` 内で不要な言語定義をフィルタリングし、バイナリサイズを削減する基盤となる
+- **syntect Binary Dump (`build.rs`)**: `build.rs` がビルド時に `two_face::syntax::extra_newlines()` / `ThemeSet::load_defaults()` を実行し、非圧縮 packdump ファイルを `OUT_DIR` に生成する。`two-face` クレートにより、syntect のデフォルトに含まれない TypeScript, Kotlin, Swift, Dart, Elixir, TOML, Zig, Dockerfile, Terraform, Vue, Svelte, Nix 等 80 以上の言語をサポートする。ランタイムでは `syntect::dumps::from_uncompressed_data()` で読み込むことで、起動時の解凍処理を省略する
 - **Gateway/Worker 分離**: Discord I/O（Gateway）と CPUバウンドなレンダリング（Worker）を別プロセスに分離するマイクロサービス構成をサポートする。Redis リストベースのキューで通信し、Worker の水平スケーリングが可能。モノリスモードも後方互換として維持する
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGパイプライン排除（Phase 12）**: メインのレンダリングパスから usvg/resvg を完全に排除。fontdue でグリフを個別にラスタライズし、tiny_skia の PathBuilder で描画プリミティブ（角丸矩形、円、線）を構築して直接 Pixmap に描画する。usvg の SVG パース（~50ms）を完全に排除し、38%の高速化を実現

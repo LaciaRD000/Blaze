@@ -51,6 +51,8 @@ uuid = { version = "1", features = ["v4"] }
 [build-dependencies]
 # build.rs で SyntaxSet/ThemeSet をバイナリダンプするため、デフォルト構文・テーマが必要
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
+# TypeScript, Kotlin 等デフォルトに含まれないモダン言語の構文定義を追加
+two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
 
 [[bin]]
 name = "blaze-gateway"

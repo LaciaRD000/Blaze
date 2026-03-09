@@ -152,6 +152,32 @@ mod tests {
     }
 
     #[test]
+    fn highlight_typescript_code_produces_tokens() {
+        let ss = default_syntax_set();
+        let theme = default_theme();
+        let code = "const x: number = 42;";
+        let lines = highlight(code, Some("ts"), &ss, &theme);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].tokens.len() > 1,
+            "TypeScript コードが複数トークンにハイライトされるべき"
+        );
+    }
+
+    #[test]
+    fn highlight_toml_code_produces_tokens() {
+        let ss = default_syntax_set();
+        let theme = default_theme();
+        let code = "[package]\nname = \"blaze\"";
+        let lines = highlight(code, Some("toml"), &ss, &theme);
+        assert_eq!(lines.len(), 2);
+        assert!(
+            lines[0].tokens.len() > 1,
+            "TOML コードが複数トークンにハイライトされるべき"
+        );
+    }
+
+    #[test]
     fn highlight_empty_code_returns_empty() {
         let ss = default_syntax_set();
         let theme = default_theme();
@@ -161,4 +187,5 @@ mod tests {
                 || (lines.len() == 1 && lines[0].tokens.is_empty())
         );
     }
+
 }

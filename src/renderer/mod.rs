@@ -357,6 +357,36 @@ mod tests {
         assert!(has_hackgen, "HackGen Console NF フォントが登録されているべき");
     }
 
+    /// TypeScript, Kotlin 等のモダンな言語が構文定義に含まれることを検証
+    #[test]
+    fn syntax_set_contains_modern_languages() {
+        let renderer = Renderer::new();
+        let expected = [
+            ("ts", "TypeScript"),
+            ("tsx", "TSX"),
+            ("kt", "Kotlin"),
+            ("swift", "Swift"),
+            ("dart", "Dart"),
+            ("ex", "Elixir"),
+            ("toml", "TOML"),
+            ("zig", "Zig"),
+            ("dockerfile", "Dockerfile"),
+            ("tf", "Terraform"),
+            ("vue", "Vue"),
+            ("svelte", "Svelte"),
+            ("nix", "Nix"),
+        ];
+        for (token, name) in expected {
+            assert!(
+                renderer
+                    .syntax_set
+                    .find_syntax_by_token(token)
+                    .is_some(),
+                "{name} ({token}) の構文定義が含まれるべき"
+            );
+        }
+    }
+
     #[test]
     fn render_invalid_theme_uses_fallback() {
         let renderer = Renderer::new();
