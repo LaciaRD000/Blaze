@@ -36,11 +36,12 @@ blaze-bot/
 │   │   ├── render.rs             # コンテキストメニュー「ターミナル画像化」
 │   │   └── theme.rs              # /theme set, /theme preview 等
 │   ├── renderer/
-│   │   ├── mod.rs                # レンダリングパイプライン統括 (Renderer + BackgroundCache)
+│   │   ├── mod.rs                # レンダリングパイプライン統括 (Renderer + BackgroundCache + FontSet)
 │   │   ├── background.rs         # 背景画像キャッシュ・タイリング・グラデーション生成
+│   │   ├── canvas.rs             # fontdue + tiny_skia による直接描画（SVGパイプライン排除）
 │   │   ├── highlight.rs          # syntect によるトークン化・色付け
-│   │   ├── svg_builder.rs        # 動的SVG文字列の組み立て（コードのみ、背景なし）
-│   │   └── rasterize.rs          # resvg/tiny-skia で SVG→PNG変換 + 背景合成
+│   │   ├── svg_builder.rs        # SVG文字列の組み立て（スナップショットテスト専用）
+│   │   └── rasterize.rs          # 直接描画 + シャドウ合成 + 背景合成 → PNG変換
 │   └── db/
 │       ├── mod.rs                # ThemeRepository トレイト、PgPoolコネクションプール
 │       └── models.rs             # UserTheme 構造体・CRUD
@@ -69,20 +70,19 @@ blaze-bot/
       複数ブロック → 最初のブロックを使用（将来: 選択UIまたは連結画像）
   → 入力バリデーション (最大100行 / 最大4000文字)
       超過時 → エフェメラル（実行者のみ）で「コードが長すぎます」と通知して Ok(()) で終了
-  → 入力サニタイズ (制御文字除去、Unicode正規化、SVGエスケープ)
+  → 入力サニタイズ (制御文字除去、Unicode正規化)
   → 言語自動判定 (syntect SyntaxSet)
   → トークン化 & 色付け (renderer/highlight.rs)
   → ユーザーテーマ取得 (db/ → キャッシュ層 → UserTheme or デフォルト)
-  → SVG文字列生成 (renderer/svg_builder.rs)
-      - 半透明ウィンドウ矩形 (fill-opacity)
-      - タイトルバー + 角丸
-      - 色付きテキスト (<tspan>) の配置
-      - フォント: font-family="Fira Code", "PlemolJP", sans-serif
-      - ※ 背景画像・ドロップシャドウは SVG に含めない（rasterize 側で直接描画）
+  → 直接描画 (renderer/canvas.rs)
+      - FontSet (fontdue) でグリフをラスタライズし、tiny_skia::Pixmap に直接描画
+      - 角丸矩形、タイトルバー（macOS/Linux/plain/none）、コード行をすべて tiny_skia PathBuilder で構築
+      - フォントフォールバック: Fira Code (primary) → PlemolJP (fallback)
+      - ※ SVG (usvg/resvg) パイプラインを完全に排除
   → PNG ラスタライズ + 背景合成 (renderer/rasterize.rs)
       - ドロップシャドウ: tiny_skia で矩形描画 → 1/4ダウンスケール+ぼかし → draw_pixmap で 8x アップスケール合成
-      - 背景あり: BackgroundCache → Pixmap タイリング → ダウンスケールぼかし → シャドウ（並列実行） → resvg 直接描画
-      - 背景なし: シャドウ描画 → resvg で直接 final_pixmap に描画 → PNG bytes
+      - 背景あり: BackgroundCache → Pixmap タイリング → ダウンスケールぼかし → シャドウ → コード描画（並列実行）
+      - 背景なし: シャドウ描画 → コード Pixmap を合成 → PNG bytes
       - 2x スケールで高解像度レンダリング（Discord の高DPI表示に対応）
   → Discord に通常メッセージとしてリプライ (画像添付、全員に表示)
   → メトリクス記録 (レンダリング回数、処理時間)
@@ -353,8 +353,9 @@ pub struct UserTheme {
 pub struct Renderer {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
-    pub font_db: Arc<usvg::fontdb::Database>,
-    pub background_cache: BackgroundCache, // WebP デコード済みタイルをキャッシュ
+    pub font_db: Arc<usvg::fontdb::Database>,  // SVGスナップショットテスト用に保持
+    pub font_set: canvas::FontSet,              // fontdue フォントセット（直接描画用）
+    pub background_cache: BackgroundCache,      // WebP デコード済みタイルをキャッシュ
 }
 
 impl Renderer {
@@ -368,20 +369,22 @@ impl Renderer {
         ).expect("ThemeSet packdump の読み込みに失敗");
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
+        let font_set = canvas::FontSet::new();
         let background_cache = BackgroundCache::new(); // 起動時に1回だけ WebP デコード
 
-        Self { syntax_set, theme_set, font_db: Arc::new(font_db), background_cache }
+        Self { syntax_set, theme_set, font_db: Arc::new(font_db), font_set, background_cache }
     }
 
-    /// 背景ありの場合: SVG(コードのみ) + 背景Pixmap を rasterize 側で合成
-    /// 背景なしの場合: SVG → PNG の従来パス
+    /// 直接描画パイプライン: highlight → canvas.rs (fontdue + tiny_skia) → PNG
+    /// SVG パイプライン (usvg/resvg) を完全に排除
     pub fn render_with_options(&self, code, language, theme_name, options) -> Result<Vec<u8>> {
-        let svg = self.build_svg_internal(code, language, theme_name, options)?;
+        let lines = highlight::highlight(code, language, &self.syntax_set, theme);
+        let canvas_options = canvas::CanvasOptions { /* テーマ設定から構築 */ };
         if let Some(bg_id) = &options.background_image {
             let bg_pixmap = background::load_background_pixmap(&self.background_cache, bg_id, w, h)?;
-            rasterize::rasterize_with_background(&svg, self.font_db.clone(), bg_pixmap, blur, margin)
+            rasterize::rasterize_direct_with_background(&lines, &self.font_set, &canvas_options, bg_pixmap, blur, margin)
         } else {
-            rasterize::rasterize(&svg, self.font_db.clone())
+            rasterize::rasterize_direct(&lines, &self.font_set, &canvas_options)
         }
     }
 }
@@ -398,6 +401,46 @@ fn load_fonts(font_db: &mut usvg::fontdb::Database) {
     font_db.load_font_data(include_bytes!("../assets/fonts/PlemolJP-Regular.ttf").to_vec());
     font_db.load_font_data(include_bytes!("../assets/fonts/HackGenConsoleNF-Regular.ttf").to_vec());
 }
+```
+
+### 直接描画モジュール (src/renderer/canvas.rs)
+
+```rust
+/// フォントセット（fontdue によるグリフラスタライズ）
+/// Fira Code (primary) + PlemolJP (fallback) の2フォント構成
+pub struct FontSet {
+    primary: fontdue::Font,   // Fira Code（英字・記号）
+    fallback: fontdue::Font,  // PlemolJP（日本語フォールバック）
+}
+
+impl FontSet {
+    pub fn new() -> Self {
+        // include_bytes! で埋め込んだ TTF からフォントを読み込み
+    }
+
+    /// 文字に対応するフォントを選択してラスタライズ
+    /// Fira Code の lookup_glyph_index が 0 なら PlemolJP にフォールバック
+    fn rasterize_char(&self, ch: char, px: f32) -> (fontdue::Metrics, Vec<u8>);
+}
+
+/// キャンバス描画オプション
+pub struct CanvasOptions<'a> {
+    pub bg_color: [u8; 3],
+    pub opacity: f32,
+    pub title_bar_style: &'a str,
+    pub language: Option<&'a str>,
+    pub max_line_length: Option<usize>,
+    pub show_line_numbers: bool,
+}
+
+/// ハイライト済みコード行を直接 tiny_skia::Pixmap に描画する
+/// 描画プリミティブ（角丸矩形、円、線、テキスト）はすべて tiny_skia PathBuilder で構築
+pub fn render_code_pixmap(
+    lines: &[HighlightedLine],
+    font_set: &FontSet,
+    options: &CanvasOptions,
+    scale: f32,
+) -> Result<tiny_skia::Pixmap, BlazeError>;
 ```
 
 ### ハイライト結果 (src/renderer/highlight.rs)
@@ -584,9 +627,11 @@ pub async fn reset(ctx: Context<'_>) -> Result<(), Error> { /* DB削除 */ }
 
 ---
 
-## SVGテンプレート構造 (svg_builder.rs)
+## SVGテンプレート構造 (svg_builder.rs) — スナップショットテスト専用
 
-生成するSVGの論理構造（コードのみ。背景画像は rasterize 側で Pixmap 合成する）:
+svg_builder.rs はメインのレンダリングパスでは使用されない。SVG スナップショットテスト（`insta`）でレンダリング出力の回帰を検知するためにのみ使用する。
+
+生成するSVGの論理構造（コードのみ。背景画像は含まない）:
 
 ```svg
 <svg width="..." height="...">
@@ -671,10 +716,11 @@ tokio = { version = "1", features = ["full"] }
 # 構文解析（ランタイム: packdump からロードするため default-syntaxes/default-themes 不要）
 syntect = { version = "5", default-features = false, features = ["parsing", "dump-load", "regex-onig"] }
 
-# 画像生成
-resvg = "0.45"
-tiny-skia = "0.11"
+# 画像生成（直接描画パイプライン）
+fontdue = "0.9"          # グリフラスタライズ（SVGパイプライン排除のコア）
+tiny-skia = "0.11"       # 2Dレンダリング（PathBuilder, Pixmap）
 image = { version = "0.25", default-features = false, features = ["webp", "png"] }  # WebP背景画像デコード・タイリング
+resvg = "0.45"           # SVGスナップショットテスト用（メインパスでは未使用）
 
 # データベース
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "chrono"] }
@@ -730,6 +776,7 @@ insta = "1"            # スナップショットテスト
 | **Phase 9** | syntect バイナリダンプ化 + Gateway/Worker 分離 | 高度なアーキテクチャ最適化 |
 | **Phase 10** | ぼかし直接ピクセル操作 + PNG 高速エンコード | レンダリング高速化 |
 | **Phase 11** | シャドウ1/4ダウンスケール + resvg直接描画 + 並列実行 + font-family集約 | パイプライン高速化（823ms→143ms, 83%削減） |
+| **Phase 12** | SVGパイプライン排除 + fontdue/tiny_skia直接描画 (canvas.rs) | SVGパイプライン完全排除（143ms→88ms, 累積89%削減） |
 
 ※ 各フェーズはRGBCサイクル（Red→Green→Blue→Commit）で進行する
 
@@ -740,14 +787,16 @@ insta = "1"            # スナップショットテスト
 - **syntect Binary Dump (`build.rs`)**: `build.rs` がビルド時に `SyntaxSet::load_defaults_newlines()` / `ThemeSet::load_defaults()` を実行し、非圧縮 packdump ファイルを `OUT_DIR` に生成する。ランタイムでは `syntect::dumps::from_uncompressed_data()` で読み込むことで、起動時の解凍処理を省略する。将来的には `build.rs` 内で不要な言語定義をフィルタリングし、バイナリサイズを削減する基盤となる
 - **Gateway/Worker 分離**: Discord I/O（Gateway）と CPUバウンドなレンダリング（Worker）を別プロセスに分離するマイクロサービス構成をサポートする。Redis リストベースのキューで通信し、Worker の水平スケーリングが可能。モノリスモードも後方互換として維持する
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
-- **SVGは文字列として動的生成**: テンプレートエンジン不要。`format!` / `write!` で組み立てるのが最もシンプルかつ高速
-- **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード SVG の Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
+- **SVGパイプライン排除（Phase 12）**: メインのレンダリングパスから usvg/resvg を完全に排除。fontdue でグリフを個別にラスタライズし、tiny_skia の PathBuilder で描画プリミティブ（角丸矩形、円、線）を構築して直接 Pixmap に描画する。usvg の SVG パース（~50ms）を完全に排除し、38%の高速化を実現
+- **canvas.rs 直接描画モジュール**: `FontSet` が Fira Code (primary) と PlemolJP (fallback) の fontdue::Font を保持。`render_code_pixmap()` がハイライト済みコード行を受け取り、tiny_skia::Pixmap に直接描画する。各文字は `lookup_glyph_index` でフォントを選択し、fontdue でラスタライズしたビットマップを source-over compositing で α ブレンド
+- **svg_builder.rs はスナップショットテスト専用**: SVG 文字列生成はメインパスでは使用されない。`insta` によるスナップショットテストでレンダリング出力の視覚的回帰を検知するためにのみ保持
+- **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
 - **ドロップシャドウの直接描画**: SVG の `feDropShadow` フィルタを除去し、tiny_skia で矩形を描画 → `image::imageops::blur` でぼかし → 2xスケールで合成。resvg 内部のフィルタ処理（パイプライン全体の30〜50%を占めていた）を回避
 - **シャドウの1/4ダウンスケール**: `create_shadow_pixmap` は1/4サイズで描画+ぼかしを行い、ダウンスケールされた Pixmap を返す。合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（= SCALE × 4.0 = 8.0）でアップスケールするため、upscale 処理を `draw_pixmap` に委ね、中間 Pixmap のメモリ確保を削減
 - **ぼかし処理のダウンスケール最適化**: 背景ぼかしは1/2にダウンスケール → blur_radius も1/2に。`blur_pixmap` はダウンスケールされた Pixmap とスケール倍率のタプルを返し、元サイズへの復元は `draw_pixmap` のスケール変換に委ねる。ぼかし計算量を約1/4に削減（ぼかし後は細部が消えるため品質劣化なし）
-- **resvg 直接描画**: `rasterize()` と `rasterize_with_background()` の両方で、中間の `code_pixmap` を確保せず `resvg::render()` で直接 `final_pixmap` に描画する。Pixmap の確保1回 + `draw_pixmap` 1回を削減
-- **シャドウ生成と背景ぼかしの並列実行**: `std::thread::scope` で `create_shadow_pixmap` と `blur_pixmap` を並列実行する。両処理は互いに独立しており、マルチコア環境でレイテンシを短縮
-- **SVG font-family の親要素集約**: 各 `<text>` 要素の `font-family` 属性を親 `<g>` 要素に集約し、usvg のフォント解決回数を削減
+- **resvg 直接描画（SVGパス）**: SVG ベースのレガシーパス（`rasterize()` / `rasterize_with_background()`）では、中間の `code_pixmap` を確保せず `resvg::render()` で直接 `final_pixmap` に描画する。ただしメインパスでは使用されない
+- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいエントリポイント。canvas.rs の `render_code_pixmap()` で生成した Pixmap をシャドウ・背景と合成する
+- **シャドウ・背景ぼかし・コード描画の並列実行**: `rasterize_direct_with_background()` では `std::thread::scope` で `create_shadow_pixmap`、`blur_pixmap`、`render_code_pixmap` の3処理を並列実行する。互いに独立した処理のためマルチコア環境でレイテンシを短縮
 - **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
 - **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `CompressionType::Fast` + `FilterType::Sub` で高速にエンコードし、CPU コストを削減する
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
@@ -755,7 +804,7 @@ insta = "1"            # スナップショットテスト
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する
 - **Discord API 429 リトライ**: serenity/poise はDiscord APIからの `429 Too Many Requests` レスポンスに対して、`Retry-After` ヘッダに基づく自動リトライを内蔵している。独自のリトライロジックは実装しない。ただし、Bot側のレート制限（`governor`）でリクエスト頻度を事前に抑制し、429を極力発生させない設計とする
 - **レンダリング同時実行数制御**: `tokio::sync::Semaphore` で `spawn_blocking` の同時実行数を `Settings.max_concurrent_renders`（デフォルト: 4）に制限し、CPU飽和を防止する
-- **fontdb と resvg の連携**: `usvg::Options::fontdb_mut()` 経由でフォントを登録する。`resvg::render()` はこの `fontdb` を参照してグリフを解決するため、`load_fonts()` で登録したフォントが確実にテキスト描画に使われる
+- **fontdue によるフォントフォールバック**: `FontSet::rasterize_char()` は `primary.lookup_glyph_index(ch)` でグリフの存在を確認し、0（未定義）なら `fallback`（PlemolJP）にフォールバックする。usvg/resvg の fontdb によるフォント解決を経由しないため、フォント選択のオーバーヘッドが極小
 
 ---
 
@@ -769,7 +818,8 @@ insta = "1"            # スナップショットテスト
 | `sanitize_code` | 制御文字除去、タブ/改行保持、Unicode正規化（NFC）、ゼロ幅文字 |
 | `escape_for_svg` | `&`, `<`, `>`, `"` のエスケープ |
 | `highlight` | Rust/Python/Go 各言語のトークン化、未知言語のフォールバック |
-| `svg_builder` | 行数に応じたSVG高さ計算、テーマ設定の反映、フォント指定 |
+| `svg_builder` | 行数に応じたSVG高さ計算、テーマ設定の反映、フォント指定（スナップショットテスト用） |
+| `canvas` | FontSet初期化、寸法計算、Pixmap描画（タイトルバー各スタイル、行番号）、グリフαブレンド |
 | `BlazeError` | 各バリアントの `Display` 出力、`From` 変換 |
 | `Settings` | デフォルト値、バリデーション（不正値の拒否） |
 

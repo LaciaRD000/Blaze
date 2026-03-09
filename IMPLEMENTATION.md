@@ -490,3 +490,76 @@ DESIGN.md の設計に基づき、RGBCサイクル（Red→Green→Blue→Commit
 - コミット: `docs: Phase 11 パイプライン高速化をドキュメントに反映`
 
 **Phase 11 完了確認**: 全テストが合格し、clippy 警告ゼロであること。
+
+---
+
+## Phase 12: SVGパイプライン排除 + 直接描画
+
+### Step 12.1: fontdue 依存追加 + FontSet 構造体
+
+- Cargo.toml に `fontdue = "0.9"` を追加
+- `src/renderer/canvas.rs` を作成
+- `FontSet` 構造体を実装: Fira Code (primary) + PlemolJP (fallback)
+- `FontSet::rasterize_char()`: `lookup_glyph_index` でフォントを選択し、ラスタライズ
+- `FontSet::advance_width()`: 文字のアドバンス幅を取得
+- Red: `font_set_new_succeeds` テスト
+- Green: 実装
+- Blue: clippy + fmt
+- コミット: `feat: fontdue FontSet 構造体を実装`
+
+### Step 12.2: canvas.rs 描画プリミティブ
+
+- 描画プリミティブを実装（すべて tiny_skia PathBuilder ベース）:
+  - `draw_rounded_rect()`: 角丸矩形（ウィンドウ背景）
+  - `draw_circle()`: 円（macOS タイトルバーボタン）
+  - `draw_line()`: 線（Linux タイトルバーアイコン）
+  - `draw_rect_stroke()`: 矩形枠線
+  - `draw_text()`: テキスト描画（fontdue ラスタライズ → α ブレンド）
+  - `draw_glyph()`: グリフビットマップの source-over compositing
+- Red: `draw_glyph_blends_onto_pixmap` テスト
+- Green: 実装
+- Blue: clippy + fmt
+- コミット: `feat: canvas.rs 描画プリミティブを実装`
+
+### Step 12.3: render_code_pixmap + タイトルバー描画
+
+- `calculate_dimensions()`: SVG と同じ寸法計算
+- `render_code_pixmap()`: ハイライト済みコード行を Pixmap に直接描画
+  - ウィンドウ背景（角丸 + 半透明）
+  - タイトルバー（macOS/Linux/plain/none）
+  - コード行描画（トークンごとの色付け、フォントフォールバック）
+  - 行番号描画（オプション）
+  - `max_line_length` による行トリミング
+- Red: `render_code_pixmap_produces_non_empty`, `calculate_dimensions_*`, タイトルバー各スタイルのテスト
+- Green: 実装
+- Blue: clippy + fmt
+- コミット: `feat: render_code_pixmap と直接描画パイプラインを実装`
+
+### Step 12.4: rasterize_direct / rasterize_direct_with_background
+
+- `rasterize.rs` に新しいエントリポイントを追加:
+  - `rasterize_direct()`: シャドウ + canvas 直接描画（SVG なし）
+  - `rasterize_direct_with_background()`: 背景ぼかし + シャドウ + canvas（`std::thread::scope` で3処理並列）
+- Red: `rasterize_direct_produces_png`, `rasterize_direct_with_background_produces_png`, `rasterize_direct_not_all_transparent`
+- Green: 実装
+- Blue: clippy + fmt
+- コミット: `feat: SVG パイプラインを排除した直接描画ラスタライズを実装`
+
+### Step 12.5: Renderer の切り替え — render_with_options を直接描画パスに変更
+
+- `Renderer` 構造体に `font_set: canvas::FontSet` フィールドを追加
+- `render_with_options()` を変更:
+  - 旧: `build_svg_internal()` → `rasterize()` / `rasterize_with_background()`
+  - 新: `highlight()` → `rasterize_direct()` / `rasterize_direct_with_background()`
+- `render_svg()` / `render_svg_with_options()` はスナップショットテスト用に維持
+- Red: 既存テスト (`render_rust_code_produces_png`, `render_with_background_*` 等) が Green の役割
+- Green: Renderer の切り替え
+- Blue: clippy + fmt
+- コミット: `perf: レンダリングパイプラインを SVG から直接描画に切り替え`
+
+### Step 12.6: ドキュメント更新
+
+- DESIGN.md / SPEC.md / IMPLEMENTATION.md に Phase 12 の内容を反映
+- コミット: `docs: Phase 12 SVGパイプライン排除をドキュメントに反映`
+
+**Phase 12 完了確認**: 全テストが合格し、clippy 警告ゼロであること。50行コード（背景あり）で 143ms → 88ms（38%改善）、累積 823ms → 88ms（89%削減）を達成。

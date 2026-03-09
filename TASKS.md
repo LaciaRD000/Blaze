@@ -94,3 +94,12 @@
 - [x] SVG font-family 集約（親 `<g>` に移動、各 `<text>` から除去）
 - [x] ベンチマーク計測（累計: 823ms → 143ms、83%削減）
 - [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）
+
+## Phase 12: SVG パイプライン廃止 → 直接描画
+
+- [x] fontdue 依存追加 + FontSet 構造体（Fira Code + PlemolJP フォールバック）
+- [x] canvas.rs: 角丸rect, タイトルバー(macOS/Linux/plain), テキスト描画を tiny_skia で直接実装
+- [x] rasterize.rs: rasterize_direct / rasterize_direct_with_background 追加
+- [x] mod.rs: render_with_options を直接描画パスに切り替え（usvg/resvg 不使用）
+- [x] ベンチマーク計測（50行背景あり: 143ms → 88ms、累計 823ms → 88ms、89%削減）
+- [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）
