@@ -343,7 +343,6 @@ pub struct UserTheme {
     pub blur_radius: f32,       // ガウスぼかし強度 (0.0 - 30.0)
     pub opacity: f32,           // ウィンドウ不透明度 (0.3 - 1.0)
     pub font_family: String,    // フォント名 (e.g. "Fira Code")
-    pub font_size: f32,         // フォントサイズ (pt)
     pub title_bar_style: String,    // "macos" | "linux"
     pub show_line_numbers: bool,    // 行番号表示 (Phase 8 で実装、スキーマは先行準備)
 }
@@ -690,7 +689,6 @@ CREATE TABLE IF NOT EXISTS user_themes (
     blur_radius     DOUBLE PRECISION NOT NULL DEFAULT 8.0,
     opacity         DOUBLE PRECISION NOT NULL DEFAULT 0.75,
     font_family     TEXT NOT NULL DEFAULT 'Fira Code',
-    font_size       DOUBLE PRECISION NOT NULL DEFAULT 14.0,
     title_bar_style     TEXT NOT NULL DEFAULT 'macos',
     show_line_numbers   BOOLEAN NOT NULL DEFAULT FALSE,  -- Phase 8 で実装、スキーマは先行準備
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()

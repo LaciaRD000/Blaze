@@ -43,7 +43,7 @@ impl ThemeRepository for PgThemeRepository {
         let user_id = user_id as i64;
         sqlx::query_as::<_, UserTheme>(
             "SELECT user_id, color_scheme, background_id, blur_radius, opacity, \
-             font_family, font_size, title_bar_style, show_line_numbers, updated_at \
+             font_family, title_bar_style, show_line_numbers, updated_at \
              FROM user_themes WHERE user_id = $1",
         )
         .bind(user_id)
@@ -55,15 +55,14 @@ impl ThemeRepository for PgThemeRepository {
     async fn upsert_theme(&self, theme: &UserTheme) -> Result<(), BlazeError> {
         sqlx::query(
             "INSERT INTO user_themes (user_id, color_scheme, background_id, blur_radius, \
-             opacity, font_family, font_size, title_bar_style, show_line_numbers, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now()) \
+             opacity, font_family, title_bar_style, show_line_numbers, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
              ON CONFLICT (user_id) DO UPDATE SET \
              color_scheme = EXCLUDED.color_scheme, \
              background_id = EXCLUDED.background_id, \
              blur_radius = EXCLUDED.blur_radius, \
              opacity = EXCLUDED.opacity, \
              font_family = EXCLUDED.font_family, \
-             font_size = EXCLUDED.font_size, \
              title_bar_style = EXCLUDED.title_bar_style, \
              show_line_numbers = EXCLUDED.show_line_numbers, \
              updated_at = now()",
@@ -74,7 +73,6 @@ impl ThemeRepository for PgThemeRepository {
         .bind(theme.blur_radius)
         .bind(theme.opacity)
         .bind(&theme.font_family)
-        .bind(theme.font_size)
         .bind(&theme.title_bar_style)
         .bind(theme.show_line_numbers)
         .execute(&self.pool)
@@ -184,7 +182,7 @@ mod tests {
             .expect("クエリに成功するべき")
             .expect("テーマが見つかるべき");
         assert_eq!(fetched.user_id, uid as i64);
-        assert_eq!(fetched.color_scheme, "base16-ocean.dark");
+        assert_eq!(fetched.color_scheme, "base16-eighties.dark");
 
         // update
         let mut updated = fetched;

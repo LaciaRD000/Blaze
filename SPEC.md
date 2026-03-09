@@ -205,7 +205,6 @@ Bot にバンドルされたフォントから選択する。
 | `blur_radius` | DOUBLE PRECISION | ぼかし強度 |
 | `opacity` | DOUBLE PRECISION | 不透明度 |
 | `font_family` | TEXT | フォント名 |
-| `font_size` | DOUBLE PRECISION | フォントサイズ (pt) |
 | `title_bar_style` | TEXT | タイトルバースタイル |
 | `show_line_numbers` | BOOLEAN | 行番号表示 |
 | `updated_at` | TIMESTAMPTZ | 最終更新日時 |
