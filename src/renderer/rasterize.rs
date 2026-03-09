@@ -68,7 +68,7 @@ fn create_shadow_pixmap(
         None,
     );
 
-    // ダウンスケール → ぼかし → 元サイズに復元（計算量を約1/16に削減）
+    // ダウンスケール → ぼかし のみ（upscale は draw_pixmap のスケール変換に委ねる）
     // sigma=16 は十分広いため、1/4 スケールでも品質劣化が見えない
     let rgba = pixmap_to_rgba(&pixmap);
     let quarter_w = (w / 4).max(1);
@@ -81,14 +81,11 @@ fn create_shadow_pixmap(
     );
     let blurred =
         image::imageops::blur(&downscaled, SHADOW_SIGMA / 4.0);
-    let upscaled = image::imageops::resize(
-        &blurred,
-        w,
-        h,
-        image::imageops::FilterType::Triangle,
-    );
-    super::background::rgba_to_pixmap(&upscaled)
+    super::background::rgba_to_pixmap(&blurred)
 }
+
+/// シャドウの描画スケール（1/4 ダウンスケール × 2x レンダリングスケール = 8x）
+const SHADOW_DRAW_SCALE: f32 = SCALE * 4.0;
 
 /// SVG文字列をPNGバイト列に変換する（背景なし）
 pub fn rasterize(
@@ -106,35 +103,25 @@ pub fn rasterize(
     let width = (size.width() * SCALE) as u32;
     let height = (size.height() * SCALE) as u32;
 
-    let mut code_pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| BlazeError::rendering("Pixmap の作成に失敗"))?;
-
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(SCALE, SCALE),
-        &mut code_pixmap.as_mut(),
-    );
-
-    // シャドウを1xで生成し、2xスケールで合成
+    // シャドウを先に描画し、その上に resvg で直接レンダリング（Pixmap 確保 + draw を1回削減）
     let shadow = create_shadow_pixmap(size.width(), size.height())?;
     let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
+        .ok_or_else(|| BlazeError::rendering("Pixmap の作成に失敗"))?;
 
     final_pixmap.draw_pixmap(
         0,
         0,
         shadow.as_ref(),
         &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::from_scale(SCALE, SCALE),
+        tiny_skia::Transform::from_scale(SHADOW_DRAW_SCALE, SHADOW_DRAW_SCALE),
         None,
     );
-    final_pixmap.draw_pixmap(
-        0,
-        0,
-        code_pixmap.as_ref(),
-        &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::identity(),
-        None,
+
+    // resvg は source-over 合成でシャドウの上にコードを描画
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(SCALE, SCALE),
+        &mut final_pixmap.as_mut(),
     );
 
     encode_png_fast(&final_pixmap)
@@ -202,7 +189,7 @@ pub fn rasterize_with_background(
     blur_radius: f64,
     blur_margin: u32,
 ) -> Result<Vec<u8>, BlazeError> {
-    // 1. コード SVG をラスタライズ（透明背景）
+    // 1. SVG パース
     let options = usvg::Options {
         fontdb: font_db,
         ..Default::default()
@@ -214,25 +201,17 @@ pub fn rasterize_with_background(
     let width = (size.width() * SCALE) as u32;
     let height = (size.height() * SCALE) as u32;
 
-    let mut code_pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| BlazeError::rendering("コードPixmap作成に失敗"))?;
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(SCALE, SCALE),
-        &mut code_pixmap.as_mut(),
-    );
-
     // 2. 背景にぼかしを適用（ダウンスケール済みサイズで返る）
     let (blurred_bg, blur_scale) = blur_pixmap(bg_pixmap, blur_radius)?;
 
-    // 3. シャドウを1xで生成
+    // 3. シャドウ生成
     let shadow = create_shadow_pixmap(size.width(), size.height())?;
 
-    // 4. 最終キャンバスに合成: ぼかし背景 → シャドウ → コード
+    // 4. 最終キャンバスに合成: 背景 → シャドウ → resvg 直接描画
     let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
 
-    // 背景を描画（blur_scale × SCALE で元サイズ×2xに拡大、blur_margin 分オフセット）
+    // 背景を描画（blur_scale × SCALE で拡大、blur_margin 分オフセット）
     let bg_draw_scale = SCALE * blur_scale;
     let offset = -(blur_margin as f32) * SCALE;
     final_pixmap.draw_pixmap(
@@ -245,24 +224,21 @@ pub fn rasterize_with_background(
         None,
     );
 
-    // シャドウを2xスケールで描画
+    // シャドウを描画
     final_pixmap.draw_pixmap(
         0,
         0,
         shadow.as_ref(),
         &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::from_scale(SCALE, SCALE),
+        tiny_skia::Transform::from_scale(SHADOW_DRAW_SCALE, SHADOW_DRAW_SCALE),
         None,
     );
 
-    // コード SVG を上に合成
-    final_pixmap.draw_pixmap(
-        0,
-        0,
-        code_pixmap.as_ref(),
-        &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::identity(),
-        None,
+    // resvg で直接 final_pixmap に描画（code_pixmap の確保 + draw を省略）
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(SCALE, SCALE),
+        &mut final_pixmap.as_mut(),
     );
 
     encode_png_fast(&final_pixmap)
@@ -369,16 +345,16 @@ mod tests {
     }
 
     #[test]
-    fn create_shadow_pixmap_produces_valid_pixmap() {
+    fn create_shadow_pixmap_produces_downscaled_pixmap() {
         let shadow = create_shadow_pixmap(864.0, 192.0)
             .expect("シャドウPixmap生成に成功するべき");
-        assert_eq!(shadow.width(), 864);
-        assert_eq!(shadow.height(), 192);
+        // 1/4 ダウンスケールされた Pixmap が返る
+        assert_eq!(shadow.width(), 216);
+        assert_eq!(shadow.height(), 48);
     }
 
     #[test]
     fn create_shadow_pixmap_has_opaque_center() {
-        // シャドウの中央付近には不透明ピクセルがあるべき
         let shadow = create_shadow_pixmap(864.0, 192.0)
             .expect("シャドウPixmap生成に成功するべき");
         let cx = shadow.width() / 2;
