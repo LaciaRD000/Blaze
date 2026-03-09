@@ -338,3 +338,75 @@ fn run_benchmark(label: &str, code: &str, language: Option<&str>) {
     nobg_times.sort();
     println!("  背景なし e2e: {}μs (median of {:?})", nobg_times[1], nobg_times);
 }
+
+/// e2e のみの軽量ベンチ（ステップ別計測を除外し、安定した計測を行う）
+#[test]
+fn bench_e2e_only() {
+    let renderer = Renderer::new();
+    let theme_name = "base16-ocean.dark";
+
+    let codes: Vec<(&str, String)> = vec![
+        ("3行", "fn main() {\n    println!(\"Hello, world!\");\n}".to_string()),
+        ("21行", {
+            let mut lines = Vec::new();
+            lines.push("use std::collections::HashMap;".to_string());
+            lines.push("".to_string());
+            lines.push("fn main() {".to_string());
+            for i in 0..16 {
+                lines.push(format!("    let v{i} = {i};"));
+            }
+            lines.push("    println!(\"done\");".to_string());
+            lines.push("}".to_string());
+            lines.join("\n")
+        }),
+        ("50行", {
+            let mut lines = Vec::new();
+            lines.push("use std::io;".to_string());
+            lines.push("".to_string());
+            lines.push("fn main() {".to_string());
+            for i in 0..45 {
+                lines.push(format!("    let var_{i} = \"value_{i}\"; // コメント {i}"));
+            }
+            lines.push("    println!(\"done\");".to_string());
+            lines.push("}".to_string());
+            lines.join("\n")
+        }),
+    ];
+
+    let bg_opts = RenderOptions {
+        background_image: Some("gradient".to_string()),
+        ..Default::default()
+    };
+
+    println!("\n{:=<60}", "");
+    println!("  e2e ベンチ（5回計測、メディアン）");
+    println!("{:=<60}", "");
+
+    for (label, code) in &codes {
+        // ウォームアップ
+        let _ = renderer.render_with_options(code, Some("rust"), theme_name, &bg_opts);
+        let _ = renderer.render_with_options(code, Some("rust"), theme_name, &RenderOptions::default());
+
+        // 背景あり 5回
+        let mut bg_times: Vec<u128> = (0..5).map(|_| {
+            let t = Instant::now();
+            let _ = renderer.render_with_options(code, Some("rust"), theme_name, &bg_opts).unwrap();
+            t.elapsed().as_micros()
+        }).collect();
+        bg_times.sort();
+
+        // 背景なし 5回
+        let mut nobg_times: Vec<u128> = (0..5).map(|_| {
+            let t = Instant::now();
+            let _ = renderer.render_with_options(code, Some("rust"), theme_name, &RenderOptions::default()).unwrap();
+            t.elapsed().as_micros()
+        }).collect();
+        nobg_times.sort();
+
+        println!(
+            "  {label:<6} 背景あり: {:>6}μs  背景なし: {:>6}μs",
+            bg_times[2], nobg_times[2]
+        );
+    }
+    println!("{:=<60}", "");
+}

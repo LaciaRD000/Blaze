@@ -202,9 +202,7 @@ pub fn render_code_pixmap(
                     &bitmap,
                     &metrics,
                     x as i32 + metrics.xmin,
-                    text_y as i32 - metrics.ymin
-                        - metrics.height as i32
-                        + (metrics.height as i32),
+                    text_y as i32 - metrics.ymin,
                     color,
                 );
                 x += metrics.advance_width;
