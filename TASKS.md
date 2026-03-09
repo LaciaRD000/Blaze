@@ -103,3 +103,11 @@
 - [x] mod.rs: render_with_options を直接描画パスに切り替え（usvg/resvg 不使用）
 - [x] ベンチマーク計測（50行背景あり: 143ms → 88ms、累計 823ms → 88ms、89%削減）
 - [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）
+
+## Phase 14: シャドウキャッシュ化
+
+- [x] ShadowCache 構造体（Mutex<HashMap<(u32,u32), Pixmap>>）
+- [x] rasterize_direct*: &ShadowCache 経由でキャッシュ利用
+- [x] Renderer に shadow_cache フィールド追加
+- [x] ベンチマーク計測（cache miss=101ms → hit=73ms、28ms 改善）
+- [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）

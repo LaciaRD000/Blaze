@@ -286,9 +286,10 @@ log_level = "info"
 - **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいラスタライズ関数。canvas.rs の Pixmap をシャドウ・背景と合成
 - 背景ぼかしは `image::imageops::blur` による直接ピクセル操作で処理。ダウンスケール最適化（1/2 に縮小 → ぼかし → 復元）で計算量を約1/4に削減
 - ドロップシャドウは tiny_skia で矩形を直接描画し、1/4ダウンスケール+ぼかしを行う。`create_shadow_pixmap` はダウンスケールされた Pixmap を返し、合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（8.0x）でアップスケールする
-- 背景ぼかし・シャドウ生成・コード描画を `std::thread::scope` で並列実行（互いに独立した処理のためマルチコア環境でレイテンシ短縮）
+- **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14）**: シャドウ Pixmap を `(svg_width, svg_height)` でキャッシュ。シャドウはサイズのみに依存し、パターン数は高々 ~50。キャッシュヒット時は即座に返却し、~28ms の短縮を実現（50行背景なし: 101ms→73ms）。初回リクエスト（キャッシュミス）のみフル生成コストが発生
+- 背景パスでは ShadowCache からシャドウを即座に取得し、背景ぼかし+コード描画を `std::thread::scope` で2スレッド並列実行（キャッシュ導入前の3スレッドから削減）
 - PNG エンコードは `CompressionType::Fast` で高速に出力（Discord 側の再圧縮を考慮）
-- 累積最適化効果: 50行コード（背景あり）で 823ms → 88ms（89%削減）
+- 累積最適化効果: 50行コード（背景あり）で 823ms → 88ms（89%削減）。背景なしではキャッシュヒット時 101ms → 73ms（Phase 14）
 
 ### 12.2 セキュリティ
 

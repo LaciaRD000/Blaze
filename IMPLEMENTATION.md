@@ -563,3 +563,41 @@ DESIGN.md の設計に基づき、RGBCサイクル（Red→Green→Blue→Commit
 - コミット: `docs: Phase 12 SVGパイプライン排除をドキュメントに反映`
 
 **Phase 12 完了確認**: 全テストが合格し、clippy 警告ゼロであること。50行コード（背景あり）で 143ms → 88ms（38%改善）、累積 823ms → 88ms（89%削減）を達成。
+
+---
+
+## Phase 14: シャドウ Pixmap サイズ別キャッシュ
+
+### Step 14.1: ShadowCache 構造体 + get_or_create
+
+- `src/renderer/rasterize.rs` に `ShadowCache` 構造体を追加
+- `Mutex<HashMap<(u32, u32), tiny_skia::Pixmap>>` でシャドウ Pixmap をサイズ別にキャッシュ
+- `get_or_create(svg_width, svg_height)`: キャッシュヒット時はクローンを返し、ミス時は `create_shadow_pixmap()` で生成してキャッシュに格納
+- シャドウは `(svg_width, svg_height)` にのみ依存（幅は常に 864px、高さは行数+タイトルバースタイルで決定）
+- パターン数は高々 ~50 のためメモリ消費は最小限
+- Red: `shadow_cache_returns_same_result`（同一サイズで同じ結果）、`shadow_cache_different_sizes_are_independent`（異なるサイズは独立）
+- Green: 実装
+- Blue: clippy + fmt
+- コミット: `perf: シャドウ Pixmap サイズ別キャッシュを実装`
+
+### Step 14.2: Renderer + rasterize_direct への統合
+
+- `Renderer` 構造体に `shadow_cache: rasterize::ShadowCache` フィールドを追加
+- `Renderer::new()` で `ShadowCache::new()` を生成
+- `rasterize_direct()` と `rasterize_direct_with_background()` の引数に `&ShadowCache` を追加
+- `rasterize_direct()`: `shadow_cache.get_or_create()` でシャドウを取得
+- `rasterize_direct_with_background()`: シャドウをキャッシュから即座に取得し、背景ぼかし+コード描画のみを `std::thread::scope` で2スレッド並列実行（従来の3スレッドから削減）
+- `render_with_options()` から `&self.shadow_cache` を渡すように変更
+- Red: 既存テスト（`rasterize_direct_produces_png`, `rasterize_direct_with_background_produces_png` 等）が Green の役割
+- Green: 統合
+- Blue: clippy + fmt
+- コミット: `perf: ShadowCache を Renderer とラスタライズ関数に統合`
+
+### Step 14.3: ベンチマーク + ドキュメント更新
+
+- ベンチマーク結果: 50行背景なし — キャッシュミス 101ms → ヒット 73ms（~28ms 短縮）
+- 初回リクエスト（キャッシュミス）は従来と同等のコスト
+- DESIGN.md / SPEC.md / IMPLEMENTATION.md に Phase 14 の内容を反映
+- コミット: `docs: Phase 14 シャドウキャッシュをドキュメントに反映`
+
+**Phase 14 完了確認**: 全テストが合格し、clippy 警告ゼロであること。キャッシュヒット時に ~28ms の短縮を達成。

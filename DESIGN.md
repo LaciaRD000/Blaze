@@ -36,12 +36,12 @@ blaze-bot/
 │   │   ├── render.rs             # コンテキストメニュー「ターミナル画像化」
 │   │   └── theme.rs              # /theme set, /theme preview 等
 │   ├── renderer/
-│   │   ├── mod.rs                # レンダリングパイプライン統括 (Renderer + BackgroundCache + FontSet)
+│   │   ├── mod.rs                # レンダリングパイプライン統括 (Renderer + BackgroundCache + ShadowCache + FontSet)
 │   │   ├── background.rs         # 背景画像キャッシュ・タイリング・グラデーション生成
 │   │   ├── canvas.rs             # fontdue + tiny_skia による直接描画（SVGパイプライン排除）
 │   │   ├── highlight.rs          # syntect によるトークン化・色付け
 │   │   ├── svg_builder.rs        # SVG文字列の組み立て（スナップショットテスト専用）
-│   │   └── rasterize.rs          # 直接描画 + シャドウ合成 + 背景合成 → PNG変換
+│   │   └── rasterize.rs          # 直接描画 + シャドウ合成 + 背景合成 → PNG変換 (ShadowCache)
 │   └── db/
 │       ├── mod.rs                # ThemeRepository トレイト、PgPoolコネクションプール
 │       └── models.rs             # UserTheme 構造体・CRUD
@@ -80,9 +80,11 @@ blaze-bot/
       - フォントフォールバック: Fira Code (primary) → PlemolJP (fallback)
       - ※ SVG (usvg/resvg) パイプラインを完全に排除
   → PNG ラスタライズ + 背景合成 (renderer/rasterize.rs)
-      - ドロップシャドウ: tiny_skia で矩形描画 → 1/4ダウンスケール+ぼかし → draw_pixmap で 8x アップスケール合成
-      - 背景あり: BackgroundCache → Pixmap タイリング → ダウンスケールぼかし → シャドウ → コード描画（並列実行）
-      - 背景なし: シャドウ描画 → コード Pixmap を合成 → PNG bytes
+      - ドロップシャドウ: ShadowCache からサイズ別にキャッシュ取得（ヒット時は即座に返却）
+        - キャッシュミス時: tiny_skia で矩形描画 → 1/4ダウンスケール+ぼかし → キャッシュに格納
+        - 合成時: draw_pixmap で 8x アップスケール合成
+      - 背景あり: ShadowCache → キャッシュ取得（即座）、背景ぼかし+コード描画を並列実行（2スレッド）
+      - 背景なし: ShadowCache → キャッシュ取得 → コード Pixmap を合成 → PNG bytes
       - 2x スケールで高解像度レンダリング（Discord の高DPI表示に対応）
   → Discord に通常メッセージとしてリプライ (画像添付、全員に表示)
   → メトリクス記録 (レンダリング回数、処理時間)
@@ -355,6 +357,7 @@ pub struct Renderer {
     pub theme_set: ThemeSet,
     pub font_db: Arc<usvg::fontdb::Database>,  // SVGスナップショットテスト用に保持
     pub font_set: canvas::FontSet,              // fontdue フォントセット（直接描画用）
+    pub shadow_cache: rasterize::ShadowCache,   // シャドウ Pixmap サイズ別キャッシュ
     pub background_cache: BackgroundCache,      // WebP デコード済みタイルをキャッシュ
 }
 
@@ -370,9 +373,10 @@ impl Renderer {
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
         let font_set = canvas::FontSet::new();
+        let shadow_cache = rasterize::ShadowCache::new(); // シャドウ Pixmap キャッシュ
         let background_cache = BackgroundCache::new(); // 起動時に1回だけ WebP デコード
 
-        Self { syntax_set, theme_set, font_db: Arc::new(font_db), font_set, background_cache }
+        Self { syntax_set, theme_set, font_db: Arc::new(font_db), font_set, shadow_cache, background_cache }
     }
 
     /// 直接描画パイプライン: highlight → canvas.rs (fontdue + tiny_skia) → PNG
@@ -382,9 +386,9 @@ impl Renderer {
         let canvas_options = canvas::CanvasOptions { /* テーマ設定から構築 */ };
         if let Some(bg_id) = &options.background_image {
             let bg_pixmap = background::load_background_pixmap(&self.background_cache, bg_id, w, h)?;
-            rasterize::rasterize_direct_with_background(&lines, &self.font_set, &canvas_options, bg_pixmap, blur, margin)
+            rasterize::rasterize_direct_with_background(&lines, &self.font_set, &canvas_options, &self.shadow_cache, bg_pixmap, blur, margin)
         } else {
-            rasterize::rasterize_direct(&lines, &self.font_set, &canvas_options)
+            rasterize::rasterize_direct(&lines, &self.font_set, &canvas_options, &self.shadow_cache)
         }
     }
 }
@@ -394,6 +398,19 @@ impl Renderer {
 pub struct BackgroundCache {
     denim: image::RgbaImage,
     repeated_square_dark: image::RgbaImage,
+}
+
+/// ShadowCache: シャドウ Pixmap を (svg_width, svg_height) でキャッシュ
+/// シャドウはコード内容やテーマに依存せず、サイズのみで決まるため高いヒット率を実現
+/// 幅は常に 864px、高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50
+pub struct ShadowCache {
+    cache: Mutex<HashMap<(u32, u32), tiny_skia::Pixmap>>,
+}
+
+impl ShadowCache {
+    pub fn new() -> Self;
+    /// キャッシュヒット時はクローンを返し、ミス時は生成してキャッシュに格納
+    pub fn get_or_create(&self, svg_width: f32, svg_height: f32) -> Result<tiny_skia::Pixmap, BlazeError>;
 }
 
 fn load_fonts(font_db: &mut usvg::fontdb::Database) {
@@ -777,6 +794,7 @@ insta = "1"            # スナップショットテスト
 | **Phase 10** | ぼかし直接ピクセル操作 + PNG 高速エンコード | レンダリング高速化 |
 | **Phase 11** | シャドウ1/4ダウンスケール + resvg直接描画 + 並列実行 + font-family集約 | パイプライン高速化（823ms→143ms, 83%削減） |
 | **Phase 12** | SVGパイプライン排除 + fontdue/tiny_skia直接描画 (canvas.rs) | SVGパイプライン完全排除（143ms→88ms, 累積89%削減） |
+| **Phase 14** | シャドウ Pixmap サイズ別キャッシュ (ShadowCache) | キャッシュヒット時 ~28ms 短縮（101ms→73ms, 50行背景なし） |
 
 ※ 各フェーズはRGBCサイクル（Red→Green→Blue→Commit）で進行する
 
@@ -795,8 +813,9 @@ insta = "1"            # スナップショットテスト
 - **シャドウの1/4ダウンスケール**: `create_shadow_pixmap` は1/4サイズで描画+ぼかしを行い、ダウンスケールされた Pixmap を返す。合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（= SCALE × 4.0 = 8.0）でアップスケールするため、upscale 処理を `draw_pixmap` に委ね、中間 Pixmap のメモリ確保を削減
 - **ぼかし処理のダウンスケール最適化**: 背景ぼかしは1/2にダウンスケール → blur_radius も1/2に。`blur_pixmap` はダウンスケールされた Pixmap とスケール倍率のタプルを返し、元サイズへの復元は `draw_pixmap` のスケール変換に委ねる。ぼかし計算量を約1/4に削減（ぼかし後は細部が消えるため品質劣化なし）
 - **resvg 直接描画（SVGパス）**: SVG ベースのレガシーパス（`rasterize()` / `rasterize_with_background()`）では、中間の `code_pixmap` を確保せず `resvg::render()` で直接 `final_pixmap` に描画する。ただしメインパスでは使用されない
-- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいエントリポイント。canvas.rs の `render_code_pixmap()` で生成した Pixmap をシャドウ・背景と合成する
-- **シャドウ・背景ぼかし・コード描画の並列実行**: `rasterize_direct_with_background()` では `std::thread::scope` で `create_shadow_pixmap`、`blur_pixmap`、`render_code_pixmap` の3処理を並列実行する。互いに独立した処理のためマルチコア環境でレイテンシを短縮
+- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいエントリポイント。canvas.rs の `render_code_pixmap()` で生成した Pixmap をシャドウ・背景と合成する。`&ShadowCache` を引数に取り、シャドウ Pixmap をキャッシュから取得する
+- **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14）**: `ShadowCache`（`Mutex<HashMap<(u32, u32), tiny_skia::Pixmap>>`）がシャドウ Pixmap を `(svg_width, svg_height)` でキャッシュする。シャドウはコード内容やテーマに依存せず、サイズのみで決まるため高いヒット率を実現。幅は常に 864px、高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50。`get_or_create()` でキャッシュヒット時はクローンを返し、ミス時は生成して格納する。ベンチマーク: キャッシュミス 101ms → ヒット 73ms（50行背景なし、~28ms 短縮）
+- **背景ぼかし・コード描画の並列実行**: `rasterize_direct_with_background()` ではシャドウを `ShadowCache` から即座に取得し、`std::thread::scope` で `blur_pixmap` と `render_code_pixmap` の2処理を並列実行する（キャッシュ導入前は3スレッドだったが、シャドウ生成が不要になり2スレッドに削減）
 - **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
 - **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `CompressionType::Fast` + `FilterType::Sub` で高速にエンコードし、CPU コストを削減する
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
@@ -820,6 +839,7 @@ insta = "1"            # スナップショットテスト
 | `highlight` | Rust/Python/Go 各言語のトークン化、未知言語のフォールバック |
 | `svg_builder` | 行数に応じたSVG高さ計算、テーマ設定の反映、フォント指定（スナップショットテスト用） |
 | `canvas` | FontSet初期化、寸法計算、Pixmap描画（タイトルバー各スタイル、行番号）、グリフαブレンド |
+| `rasterize` (ShadowCache) | キャッシュヒット/ミスの一貫性、サイズ別独立性 |
 | `BlazeError` | 各バリアントの `Display` 出力、`From` 変換 |
 | `Settings` | デフォルト値、バリデーション（不正値の拒否） |
 
