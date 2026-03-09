@@ -282,8 +282,12 @@ log_level = "info"
 - テクスチャ背景（denim, repeated-square-dark）は `image::imageops::overlay` でタイリング
 - SVG → PNG ラスタライズ時に 2x スケールを適用し、Discord の高DPI表示でもシャープに表示される高解像度画像を生成する
 - 背景ぼかしは `image::imageops::blur` による直接ピクセル操作で処理（SVG 経由の往復を排除し高速化）。さらにダウンスケール最適化（1/2 に縮小 → ぼかし → 復元）で計算量を約1/4に削減
-- ドロップシャドウは SVG の `feDropShadow` フィルタではなく、tiny_skia で1xサイズの矩形を直接描画+ぼかしし、2xスケールで合成。resvg 内部のフィルタ処理を回避し、パイプライン全体を約60%高速化
+- ドロップシャドウは SVG の `feDropShadow` フィルタではなく、tiny_skia で矩形を直接描画し、1/4ダウンスケール+ぼかしを行う。`create_shadow_pixmap` はダウンスケールされた Pixmap を返し、合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（8.0x）でアップスケールする。resvg 内部のフィルタ処理を完全に回避
+- resvg は中間 Pixmap を確保せず `final_pixmap` に直接描画する（`rasterize()` / `rasterize_with_background()` 共通）。Pixmap 確保1回 + `draw_pixmap` 1回を削減
+- 背景ぼかしとシャドウ生成を `std::thread::scope` で並列実行（互いに独立した処理のためマルチコア環境でレイテンシ短縮）
+- SVG の `font-family` 属性を親 `<g>` 要素に集約し、usvg のフォント解決回数を削減
 - PNG エンコードは `CompressionType::Fast` で高速に出力（Discord 側の再圧縮を考慮）
+- 累積最適化効果: 50行コード（背景あり）で 823ms → 143ms（83%削減）
 
 ### 12.2 セキュリティ
 

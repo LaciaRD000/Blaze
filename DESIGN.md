@@ -80,9 +80,9 @@ blaze-bot/
       - フォント: font-family="Fira Code", "PlemolJP", sans-serif
       - ※ 背景画像・ドロップシャドウは SVG に含めない（rasterize 側で直接描画）
   → PNG ラスタライズ + 背景合成 (renderer/rasterize.rs)
-      - ドロップシャドウ: tiny_skia で矩形描画 → ガウスぼかし（1xサイズ） → 2xスケールで合成
-      - 背景あり: BackgroundCache → Pixmap タイリング → ダウンスケールぼかし → シャドウ → コード SVG を上に合成
-      - 背景なし: resvg::render() → シャドウ合成 → PNG bytes
+      - ドロップシャドウ: tiny_skia で矩形描画 → 1/4ダウンスケール+ぼかし → draw_pixmap で 8x アップスケール合成
+      - 背景あり: BackgroundCache → Pixmap タイリング → ダウンスケールぼかし → シャドウ（並列実行） → resvg 直接描画
+      - 背景なし: シャドウ描画 → resvg で直接 final_pixmap に描画 → PNG bytes
       - 2x スケールで高解像度レンダリング（Discord の高DPI表示に対応）
   → Discord に通常メッセージとしてリプライ (画像添付、全員に表示)
   → メトリクス記録 (レンダリング回数、処理時間)
@@ -727,6 +727,9 @@ insta = "1"            # スナップショットテスト
 | **Phase 6** | 独自エラー型 + レート制限 + 入力サニタイズ + 設定管理強化 | 堅牢性・セキュリティ |
 | **Phase 7** | ロギング基盤整備 + メトリクス収集 | 運用監視 |
 | **Phase 8** | 行番号表示オプション + 複数コードブロック対応 | UX向上 |
+| **Phase 9** | syntect バイナリダンプ化 + Gateway/Worker 分離 | 高度なアーキテクチャ最適化 |
+| **Phase 10** | ぼかし直接ピクセル操作 + PNG 高速エンコード | レンダリング高速化 |
+| **Phase 11** | シャドウ1/4ダウンスケール + resvg直接描画 + 並列実行 + font-family集約 | パイプライン高速化（823ms→143ms, 83%削減） |
 
 ※ 各フェーズはRGBCサイクル（Red→Green→Blue→Commit）で進行する
 
@@ -740,7 +743,11 @@ insta = "1"            # スナップショットテスト
 - **SVGは文字列として動的生成**: テンプレートエンジン不要。`format!` / `write!` で組み立てるのが最もシンプルかつ高速
 - **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード SVG の Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
 - **ドロップシャドウの直接描画**: SVG の `feDropShadow` フィルタを除去し、tiny_skia で矩形を描画 → `image::imageops::blur` でぼかし → 2xスケールで合成。resvg 内部のフィルタ処理（パイプライン全体の30〜50%を占めていた）を回避
-- **ぼかし処理のダウンスケール最適化**: 背景ぼかしは1/2にダウンスケール → blur_radius も1/2に → 元サイズに復元。ぼかし計算量を約1/4に削減（ぼかし後は細部が消えるため品質劣化なし）
+- **シャドウの1/4ダウンスケール**: `create_shadow_pixmap` は1/4サイズで描画+ぼかしを行い、ダウンスケールされた Pixmap を返す。合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（= SCALE × 4.0 = 8.0）でアップスケールするため、upscale 処理を `draw_pixmap` に委ね、中間 Pixmap のメモリ確保を削減
+- **ぼかし処理のダウンスケール最適化**: 背景ぼかしは1/2にダウンスケール → blur_radius も1/2に。`blur_pixmap` はダウンスケールされた Pixmap とスケール倍率のタプルを返し、元サイズへの復元は `draw_pixmap` のスケール変換に委ねる。ぼかし計算量を約1/4に削減（ぼかし後は細部が消えるため品質劣化なし）
+- **resvg 直接描画**: `rasterize()` と `rasterize_with_background()` の両方で、中間の `code_pixmap` を確保せず `resvg::render()` で直接 `final_pixmap` に描画する。Pixmap の確保1回 + `draw_pixmap` 1回を削減
+- **シャドウ生成と背景ぼかしの並列実行**: `std::thread::scope` で `create_shadow_pixmap` と `blur_pixmap` を並列実行する。両処理は互いに独立しており、マルチコア環境でレイテンシを短縮
+- **SVG font-family の親要素集約**: 各 `<text>` 要素の `font-family` 属性を親 `<g>` 要素に集約し、usvg のフォント解決回数を削減
 - **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
 - **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `CompressionType::Fast` + `FilterType::Sub` で高速にエンコードし、CPU コストを削減する
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない

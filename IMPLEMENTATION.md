@@ -455,10 +455,38 @@ DESIGN.md の設計に基づき、RGBCサイクル（Red→Green→Blue→Commit
 - **Blue**: リファクタリング
 - コミット: `perf: 背景ぼかしにダウンスケール最適化を適用`
 
-### Step 11.3: ドキュメント更新 + ベンチマーク
+### Step 11.3: シャドウの1/4ダウンスケール + アップスケール排除
+
+- **Red**: `create_shadow_pixmap_produces_downscaled_pixmap` テストを追加（1/4サイズの Pixmap が返ることを検証）
+- **Green**: `create_shadow_pixmap` でダウンスケール→ぼかしのみ行い、アップスケールを排除。`SHADOW_DRAW_SCALE = SCALE * 4.0 = 8.0` 定数を導入し、`draw_pixmap` のスケール変換に委ねる
+- **Blue**: リファクタリング
+- コミット: `perf: シャドウの1/4ダウンスケール + アップスケール排除`
+
+### Step 11.4: resvg 直接描画（中間 code_pixmap の排除）
+
+- **Red**: 既存の `rasterize_valid_svg_returns_png_bytes` / `rasterize_with_background_produces_png` テストが Green の役割
+- **Green**: `rasterize()` と `rasterize_with_background()` で `resvg::render()` を直接 `final_pixmap` に描画するように変更。中間 `code_pixmap` の確保 + `draw_pixmap` 呼び出しを1回ずつ削減
+- **Blue**: リファクタリング
+- コミット: `perf: resvg 直接描画で中間 Pixmap 確保を排除`
+
+### Step 11.5: シャドウ生成と背景ぼかしの並列実行
+
+- **Red**: 既存テストが Green の役割（出力の正しさは変わらない）
+- **Green**: `rasterize_with_background()` で `std::thread::scope` を用い `create_shadow_pixmap` と `blur_pixmap` を並列実行
+- **Blue**: リファクタリング
+- コミット: `perf: std::thread::scope でシャドウ生成と背景ぼかしを並列化`
+
+### Step 11.6: SVG font-family の親要素集約
+
+- **Red**: 既存の SVG スナップショットテストが Green の役割
+- **Green**: `svg_builder.rs` で各 `<text>` の `font-family` 属性を親 `<g>` 要素に集約し、usvg のフォント解決回数を削減
+- **Blue**: スナップショット更新
+- コミット: `perf: SVG font-family を親 <g> 要素に集約`
+
+### Step 11.7: ドキュメント更新 + ベンチマーク
 
 - DESIGN.md / SPEC.md / IMPLEMENTATION.md / TASKS.md にパイプライン高速化の内容を反映
-- ベンチマーク結果: パイプライン全体で約60%高速化（50行背景あり: 823ms → 315ms）
+- ベンチマーク結果: 累積最適化で 823ms → 143ms（83%削減、50行コード背景あり）
 - コミット: `docs: Phase 11 パイプライン高速化をドキュメントに反映`
 
 **Phase 11 完了確認**: 全テストが合格し、clippy 警告ゼロであること。

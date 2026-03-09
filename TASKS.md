@@ -88,5 +88,9 @@
 
 - [x] feDropShadow を SVG から除去 → tiny_skia で直接描画（resvg フィルタ処理を回避）
 - [x] 背景ぼかしのダウンスケール最適化（1/2 縮小 → ぼかし → 復元で計算量1/4）
-- [x] ベンチマーク計測（パイプライン全体で約60%高速化）
+- [x] シャドウ blur 1/4 ダウンスケール + 背景 upscale 排除
+- [x] シャドウ upscale 排除 + resvg 直接描画（中間 Pixmap 確保削減）
+- [x] 背景ぼかし/シャドウの並列実行（std::thread::scope）
+- [x] SVG font-family 集約（親 `<g>` に移動、各 `<text>` から除去）
+- [x] ベンチマーク計測（累計: 823ms → 143ms、83%削減）
 - [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）
