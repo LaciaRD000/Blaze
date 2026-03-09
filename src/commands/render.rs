@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use poise::serenity_prelude as serenity;
 use regex::Regex;
@@ -8,6 +8,11 @@ use crate::db::{PgThemeRepository, ThemeRepository};
 use crate::error::BlazeError;
 use crate::sanitize::sanitize_code;
 use crate::{Context, Error};
+
+/// コードブロック抽出用の正規表現（コンパイル結果をキャッシュ）
+static CODE_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"```(\w*)\n([\s\S]*?)```").expect("正規表現のコンパイルに失敗")
+});
 
 pub struct CodeBlock {
     pub language: Option<String>,
@@ -27,9 +32,7 @@ impl CodeBlock {
 /// メッセージ本文から最初のコードブロックを抽出する
 /// 正規表現: ```(\w*)\n([\s\S]*?)```
 pub fn extract_code_block(content: &str) -> Option<CodeBlock> {
-    let re = Regex::new(r"```(\w*)\n([\s\S]*?)```")
-        .expect("正規表現のコンパイルに失敗");
-    let caps = re.captures(content)?;
+    let caps = CODE_BLOCK_RE.captures(content)?;
 
     let language = caps.get(1).and_then(|m| {
         let lang = m.as_str();
@@ -49,7 +52,7 @@ pub fn extract_code_block(content: &str) -> Option<CodeBlock> {
 }
 
 /// コンテキストメニュー「ターミナル画像化」
-/// Phase 2 で実画像生成に接続する。現在はスタブ（テキスト返信）。
+/// メッセージ内のコードブロックを抽出し、ユーザーのテーマ設定に基づいてターミナル風 PNG 画像を生成して返信する。
 #[poise::command(
     context_menu_command = "ターミナル画像化",
     category = "Render"

@@ -15,7 +15,7 @@ use blaze_bot::error::BlazeError;
 use blaze_bot::protocol::{
     RenderJob, RenderJobOptions, RenderResult, JOBS_QUEUE,
 };
-use blaze_bot::{db, Data};
+use blaze_bot::{db, handlers, Data};
 
 /// RenderJob を Redis キューに投入し、結果を待つ
 async fn submit_render_job(
@@ -134,20 +134,12 @@ async fn render_message(
         },
     );
 
-    // Gateway 起動時に保持した Redis 接続を取得
-    // NOTE: GatewayData は Data のラッパーだが、poise の型制約上
-    //       redis 接続は別途管理する必要がある。
-    //       ここでは環境変数から再接続する（簡易実装）
-    let redis_url = settings
-        .redis_url
-        .as_deref()
-        .unwrap_or("redis://127.0.0.1/");
-    let redis_client = redis::Client::open(redis_url)
-        .map_err(|e| BlazeError::rendering(format!("Redis クライアント作成エラー: {e}")))?;
-    let mut redis_conn = redis_client
-        .get_multiplexed_async_connection()
-        .await
-        .map_err(|e| BlazeError::rendering(format!("Redis 接続エラー: {e}")))?;
+    // 起動時に確立した Redis 接続を再利用（Clone は内部チャネルの共有のみ）
+    let mut redis_conn = ctx
+        .data()
+        .redis
+        .clone()
+        .ok_or_else(|| BlazeError::rendering("Redis 接続が初期化されていません"))?;
 
     let render_result = submit_render_job(&mut redis_conn, &job, 30).await?;
 
@@ -177,37 +169,6 @@ async fn render_message(
     }
 
     Ok(())
-}
-
-/// グローバルエラーハンドラ
-async fn on_error(error: poise::FrameworkError<'_, Data, BlazeError>) {
-    match error {
-        poise::FrameworkError::Command { error, ctx, .. } => {
-            let user_message = match &error {
-                BlazeError::CodeBlockNotFound
-                | BlazeError::CodeTooLong { .. }
-                | BlazeError::RateLimitExceeded
-                | BlazeError::InvalidTheme(_) => error.to_string(),
-                BlazeError::Database(_)
-                | BlazeError::Rendering { .. }
-                | BlazeError::Config(_) => {
-                    tracing::error!("内部エラー: {error:?}");
-                    "内部エラーが発生しました。しばらくしてからお試しください。"
-                        .to_string()
-                }
-            };
-            let _ = ctx
-                .send(
-                    poise::CreateReply::default()
-                        .content(user_message)
-                        .ephemeral(true),
-                )
-                .await;
-        }
-        other => {
-            let _ = poise::builtins::on_error(other).await;
-        }
-    }
 }
 
 #[tokio::main]
@@ -252,7 +213,7 @@ async fn main() {
                 render_message(),
                 commands::theme::theme(),
             ],
-            on_error: |err| Box::pin(on_error(err)),
+            on_error: |err| Box::pin(handlers::on_error(err)),
             ..Default::default()
         })
         .setup(move |ctx, _ready, framework| {
@@ -267,6 +228,18 @@ async fn main() {
                 // ダミーの Renderer を作成（/theme preview で使用）
                 let renderer =
                     Arc::new(blaze_bot::renderer::Renderer::new());
+
+                // Redis 接続を起動時に1回だけ確立
+                let redis_url = settings
+                    .redis_url
+                    .as_deref()
+                    .unwrap_or("redis://127.0.0.1/");
+                let redis_client = redis::Client::open(redis_url)
+                    .expect("Redis クライアント作成に失敗");
+                let redis_conn = redis_client
+                    .get_multiplexed_async_connection()
+                    .await
+                    .expect("Redis 接続に失敗");
 
                 tracing::info!("Blaze Gateway 起動");
 
@@ -289,6 +262,7 @@ async fn main() {
                     db,
                     render_semaphore,
                     rate_limiter,
+                    redis: Some(redis_conn),
                 })
             })
         })

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 /// Pixmap を最速設定で PNG エンコードする（png crate 直接利用）
-/// NoFilter + Fast 圧縮で image crate 版より高速
+/// Sub フィルタ + Fast 圧縮で image crate 版より高速
 /// Discord は画像アップロード時に再圧縮するため、Bot 側の高圧縮は不要
 fn encode_png_fastest(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError> {
     let data = pixmap.data();

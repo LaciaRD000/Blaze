@@ -27,6 +27,7 @@ blaze-bot/
 │   ├── bin/
 │   │   ├── gateway.rs            # Gateway バイナリ（Discord I/O + Redis キュー）
 │   │   └── worker.rs             # Worker バイナリ（レンダリング処理）
+│   ├── handlers.rs               # 共通エラーハンドラ (on_error)
 │   ├── protocol.rs               # マイクロサービス間通信の型定義 (RenderJob, RenderResult)
 │   ├── config.rs                 # 設定管理 (Settings構造体、バリデーション)
 │   ├── error.rs                  # BlazeError 独自エラー型 (thiserror)
@@ -109,12 +110,13 @@ blaze-bot/
 ユーザー右クリック
   → [Discord Gateway]
   → blaze-gateway (src/bin/gateway.rs)
+      - 起動時に Redis MultiplexedConnection を確立し Data に保持（リクエスト毎の再接続を排除）
       - poise コマンドハンドラ
       - レート制限チェック (governor)
       - 入力バリデーション・サニタイズ
       - DB クエリ（ユーザーテーマ取得）
       - RenderJob を JSON シリアライズ
-      - LPUSH → Redis リスト `blaze:jobs`
+      - Data.redis から Clone した接続で LPUSH → Redis リスト `blaze:jobs`
       - BRPOP ← Redis リスト `blaze:results:{job_id}` で結果を待機
       - PNG を Discord にリプライ送信
 
@@ -175,7 +177,7 @@ pub enum RenderResult {
 
 ## 主要な型定義
 
-### Bot データ (src/main.rs)
+### Bot データ (src/lib.rs)
 
 ```rust
 pub struct Data {
@@ -184,6 +186,9 @@ pub struct Data {
     pub rate_limiter: Arc<governor::DefaultKeyedRateLimiter<u64>>,
     pub render_semaphore: Arc<tokio::sync::Semaphore>,  // spawn_blocking 同時実行数制御
     pub settings: Arc<Settings>,
+    /// Gateway モードで Worker に委譲する際の Redis 接続（Monolith では None）
+    /// MultiplexedConnection は Clone 可能で内部で多重化されるため Mutex 不要
+    pub redis: Option<redis::aio::MultiplexedConnection>,
 }
 
 // BlazeError は Into<Box<dyn Error>> を自動実装するため、poise との互換性あり
@@ -300,6 +305,13 @@ impl Settings {
 ### コードブロック (src/commands/render.rs)
 
 ```rust
+use std::sync::LazyLock;
+
+/// コードブロック抽出用の正規表現（LazyLock でコンパイル結果をキャッシュ）
+static CODE_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"```(\w*)\n([\s\S]*?)```").expect("正規表現のコンパイルに失敗")
+});
+
 pub struct CodeBlock {
     pub language: Option<String>,  // 言語タグ (e.g. "rust", "python")
     pub code: String,              // コード本体
@@ -316,7 +328,7 @@ impl CodeBlock {
 }
 
 /// メッセージ本文から最初のコードブロックを抽出する
-/// 正規表現: ```(\w*)\n([\s\S]*?)```
+/// LazyLock でキャッシュ済みの正規表現を使用（毎回のコンパイルを排除）
 pub fn extract_code_block(content: &str) -> Option<CodeBlock>;
 ```
 
@@ -590,12 +602,13 @@ pub async fn render_message(
 }
 ```
 
-### グローバルエラーハンドラ (src/main.rs)
+### グローバルエラーハンドラ (src/handlers.rs)
 
-`BlazeError` をユーザー向けのエフェメラルメッセージに変換する。内部エラーの詳細はログに記録し、ユーザーには汎用メッセージのみ返す。
+`BlazeError` をユーザー向けのエフェメラルメッセージに変換する共通ハンドラ。`main.rs`（モノリス）と `gateway.rs`（マイクロサービス）の両方から参照される。内部エラーの詳細はログに記録し、ユーザーには汎用メッセージのみ返す。
 
 ```rust
-async fn on_error(error: poise::FrameworkError<'_, Data, BlazeError>) {
+// src/handlers.rs
+pub async fn on_error(error: poise::FrameworkError<'_, Data, BlazeError>) {
     match error {
         poise::FrameworkError::Command { error, ctx, .. } => {
             let user_message = match &error {
@@ -626,9 +639,9 @@ async fn on_error(error: poise::FrameworkError<'_, Data, BlazeError>) {
     }
 }
 
-// Framework構築時に設定:
+// Framework構築時に設定（main.rs / gateway.rs 共通）:
 // poise::FrameworkOptions {
-//     on_error: |err| Box::pin(on_error(err)),
+//     on_error: |err| Box::pin(blaze_bot::handlers::on_error(err)),
 //     ..
 // }
 ```
@@ -842,9 +855,9 @@ insta = "1"            # スナップショットテスト
 - **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14→15）**: `ShadowCache`（`RwLock<HashMap<(u32, u32), Arc<tiny_skia::Pixmap>>>`）がシャドウ Pixmap を `(svg_width, svg_height)` でキャッシュする。RwLock で読み取りは共有ロック、Arc で Pixmap clone（数十KB memcpy）を pointer clone に置換。シャドウはコード内容やテーマに依存せず、サイズのみで決まるため高いヒット率を実現。幅は常に 864px、高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50
 - **背景ぼかし・コード描画の並列実行**: `rasterize_direct_with_background()` ではシャドウを `ShadowCache` から即座に取得し、`std::thread::scope` で `blur_pixmap` と `render_code_pixmap` の2処理を並列実行する（キャッシュ導入前は3スレッドだったが、シャドウ生成が不要になり2スレッドに削減）
 - **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
-- **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `png` crate を直接利用し `Compression::Fast` + `FilterType::Sub` で高速にエンコードする。`image` crate 経由より直接的で、`Vec::with_capacity` による事前確保でアロケーションも最適化
+- **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `png` crate を直接利用し `Compression::Fast` + `FilterType::Sub`（Sub フィルタは隣接ピクセルの差分をとることで圧縮効率を改善） で高速にエンコードする。`image` crate 経由より直接的で、`Vec::with_capacity` による事前確保でアロケーションも最適化
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
-- **コードブロック抽出は正規表現**: `` ```(\w*)\n([\s\S]*?)``` `` で言語タグとコード本体を分離
+- **コードブロック抽出は正規表現**: `` ```(\w*)\n([\s\S]*?)``` `` で言語タグとコード本体を分離。`LazyLock` でコンパイル結果をキャッシュし、毎メッセージの再コンパイルを排除
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する
 - **Discord API 429 リトライ**: serenity/poise はDiscord APIからの `429 Too Many Requests` レスポンスに対して、`Retry-After` ヘッダに基づく自動リトライを内蔵している。独自のリトライロジックは実装しない。ただし、Bot側のレート制限（`governor`）でリクエスト頻度を事前に抑制し、429を極力発生させない設計とする
 - **レンダリング同時実行数制御**: `tokio::sync::Semaphore` で `spawn_blocking` の同時実行数を `Settings.max_concurrent_renders`（デフォルト: 4）に制限し、CPU飽和を防止する
