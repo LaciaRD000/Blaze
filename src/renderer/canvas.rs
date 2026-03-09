@@ -454,6 +454,7 @@ fn draw_text(
 
 /// グリフビットマップを Pixmap に α ブレンドで描画する
 /// tiny_skia は premultiplied alpha 形式
+/// ループ前にクリッピング範囲を事前計算し、内部ループの per-pixel bounds check を排除
 fn draw_glyph(
     pixmap: &mut tiny_skia::Pixmap,
     bitmap: &[u8],
@@ -464,23 +465,27 @@ fn draw_glyph(
 ) {
     let pw = pixmap.width() as i32;
     let ph = pixmap.height() as i32;
+
+    // 事前にクリッピング範囲を計算（ループ内の per-pixel bounds check を排除）
+    let y_start = 0i32.max(-dest_y) as usize;
+    let y_end = (metrics.height as i32).min(ph - dest_y).max(0) as usize;
+    let x_start = 0i32.max(-dest_x) as usize;
+    let x_end = (metrics.width as i32).min(pw - dest_x).max(0) as usize;
+
     let data = pixmap.data_mut();
 
-    for gy in 0..metrics.height {
-        for gx in 0..metrics.width {
-            let coverage = bitmap[gy * metrics.width + gx];
+    for gy in y_start..y_end {
+        let py = (dest_y + gy as i32) as usize;
+        let row_offset = py * pw as usize;
+        let bmp_row_offset = gy * metrics.width;
+
+        for gx in x_start..x_end {
+            let coverage = bitmap[bmp_row_offset + gx];
             if coverage == 0 {
                 continue;
             }
 
-            let px = dest_x + gx as i32;
-            let py = dest_y + gy as i32;
-
-            if px < 0 || py < 0 || px >= pw || py >= ph {
-                continue;
-            }
-
-            let idx = (py * pw + px) as usize * 4;
+            let idx = (row_offset + dest_x as usize + gx) * 4;
             let a = coverage as u16;
             let inv_a = 255 - a;
 
