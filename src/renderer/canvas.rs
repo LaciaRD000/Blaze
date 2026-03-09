@@ -1,5 +1,8 @@
 /// SVG を介さずに tiny_skia + fontdue で直接コード画像を描画するモジュール
 /// usvg パース (~50ms) と resvg レンダリングを完全に排除し、高速化を実現
+use std::collections::HashMap;
+use std::sync::RwLock;
+
 use crate::error::BlazeError;
 use crate::renderer::highlight::HighlightedLine;
 
@@ -14,10 +17,16 @@ const BORDER_RADIUS: f32 = 12.0;
 const WINDOW_WIDTH: f32 = 800.0;
 const LINE_NUMBER_WIDTH: f32 = 40.0;
 
-/// フォントセット（プライマリ + フォールバック）
+/// グリフキャッシュの型エイリアス: (char, f32ビット表現) → (Metrics, bitmap)
+type GlyphCache = RwLock<HashMap<(char, u32), (fontdue::Metrics, Vec<u8>)>>;
+
+/// フォントセット（プライマリ + フォールバック + グリフキャッシュ）
+/// グリフキャッシュにより同一 (char, font_px) のラスタライズ結果を再利用する
 pub struct FontSet {
     primary: fontdue::Font,
     fallback: fontdue::Font,
+    /// RwLock により読み取りは共有ロック、書き込みのみ排他ロック
+    glyph_cache: GlyphCache,
 }
 
 /// フォントバイナリ（compile-time 埋め込み）
@@ -44,7 +53,11 @@ impl FontSet {
             fontdue::FontSettings::default(),
         )
         .expect("PlemolJP の読み込みに失敗");
-        Self { primary, fallback }
+        Self {
+            primary,
+            fallback,
+            glyph_cache: RwLock::new(HashMap::new()),
+        }
     }
 
     /// 文字に対応するフォントを選択し、ラスタライズする
@@ -58,6 +71,32 @@ impl FontSet {
         } else {
             self.fallback.rasterize(ch, px)
         }
+    }
+
+    /// キャッシュ付きラスタライズ: 同一 (char, px) は再利用する
+    /// 戻り値は (Metrics, &[u8]) への参照ではなくクローン（RwLock 内部のため）
+    pub fn rasterize_cached(
+        &self,
+        ch: char,
+        px: f32,
+    ) -> (fontdue::Metrics, Vec<u8>) {
+        let key = (ch, px.to_bits());
+
+        // Fast path: 読み取りロックでキャッシュヒットを確認
+        {
+            let cache = self.glyph_cache.read().expect("グリフキャッシュ read lock");
+            if let Some((metrics, bitmap)) = cache.get(&key) {
+                return (*metrics, bitmap.clone());
+            }
+        }
+
+        // Slow path: ラスタライズしてキャッシュに格納
+        let result = self.rasterize_char(ch, px);
+        {
+            let mut cache = self.glyph_cache.write().expect("グリフキャッシュ write lock");
+            cache.insert(key, result.clone());
+        }
+        result
     }
 
     /// 文字のアドバンス幅を取得する
@@ -196,7 +235,7 @@ pub fn render_code_pixmap(
 
             for ch in token.text.chars() {
                 let (metrics, bitmap) =
-                    font_set.rasterize_char(ch, font_px);
+                    font_set.rasterize_cached(ch, font_px);
                 draw_glyph(
                     &mut pixmap,
                     &bitmap,
@@ -386,7 +425,7 @@ fn draw_text(
 ) {
     let mut cursor_x = x;
     for ch in text.chars() {
-        let (metrics, bitmap) = font_set.rasterize_char(ch, font_px);
+        let (metrics, bitmap) = font_set.rasterize_cached(ch, font_px);
         draw_glyph(
             pixmap,
             &bitmap,
@@ -784,6 +823,50 @@ mod tests {
         let (tw, th) = calculate_dimensions(2, "macos");
         assert_eq!(pixmap.width(), (tw * 2.0) as u32);
         assert_eq!(pixmap.height(), (th * 2.0) as u32);
+    }
+
+    #[test]
+    fn rasterize_cached_returns_same_as_rasterize_char() {
+        let font_set = FontSet::new();
+        let ch = 'A';
+        let px = 28.0;
+        let (metrics_direct, bitmap_direct) =
+            font_set.rasterize_char(ch, px);
+        let (metrics_cached, bitmap_cached) =
+            font_set.rasterize_cached(ch, px);
+        assert_eq!(metrics_direct.width, metrics_cached.width);
+        assert_eq!(metrics_direct.height, metrics_cached.height);
+        assert_eq!(
+            metrics_direct.advance_width,
+            metrics_cached.advance_width
+        );
+        assert_eq!(bitmap_direct, bitmap_cached.to_vec());
+    }
+
+    #[test]
+    fn rasterize_cached_hits_cache_on_second_call() {
+        let font_set = FontSet::new();
+        let ch = 'B';
+        let px = 28.0;
+        let (m1, b1) = font_set.rasterize_cached(ch, px);
+        let (m2, b2) = font_set.rasterize_cached(ch, px);
+        assert_eq!(m1.width, m2.width);
+        assert_eq!(m1.height, m2.height);
+        assert_eq!(b1.as_slice(), b2.as_slice());
+    }
+
+    #[test]
+    fn rasterize_cached_fallback_font() {
+        let font_set = FontSet::new();
+        // 日本語文字はフォールバックフォント（PlemolJP）でラスタライズされる
+        let ch = 'あ';
+        let px = 28.0;
+        let (metrics_direct, bitmap_direct) =
+            font_set.rasterize_char(ch, px);
+        let (metrics_cached, bitmap_cached) =
+            font_set.rasterize_cached(ch, px);
+        assert_eq!(metrics_direct.width, metrics_cached.width);
+        assert_eq!(bitmap_direct, bitmap_cached.to_vec());
     }
 
     #[test]
