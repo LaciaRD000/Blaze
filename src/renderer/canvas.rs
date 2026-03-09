@@ -1,10 +1,11 @@
 /// SVG を介さずに tiny_skia + fontdue で直接コード画像を描画するモジュール
 /// usvg パース (~50ms) と resvg レンダリングを完全に排除し、高速化を実現
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
 use crate::error::BlazeError;
-use crate::renderer::highlight::HighlightedLine;
+use crate::renderer::highlight::{HighlightedLine, StyledToken};
 
 /// レイアウト定数（svg_builder.rs と同じ値）
 const FONT_SIZE: f32 = 14.0;
@@ -239,13 +240,14 @@ pub fn render_code_onto_pixmap(
 
         // トークン描画
         let mut x = (SHADOW_MARGIN + code_x) * s;
-        let tokens = if let Some(max_len) = options.max_line_length {
-            trim_tokens(&line.tokens, max_len)
-        } else {
-            line.tokens.clone()
-        };
+        let tokens: Cow<[StyledToken]> =
+            if let Some(max_len) = options.max_line_length {
+                Cow::Owned(trim_tokens(&line.tokens, max_len))
+            } else {
+                Cow::Borrowed(&line.tokens)
+            };
 
-        for token in &tokens {
+        for token in tokens.iter() {
             let color = [token.color.r, token.color.g, token.color.b];
             let text_y = (SHADOW_MARGIN + y) * s;
 
