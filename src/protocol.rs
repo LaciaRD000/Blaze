@@ -38,6 +38,9 @@ pub struct RenderJobOptions {
     pub show_line_numbers: bool,
     pub max_line_length: Option<usize>,
     pub background_image: Option<String>,
+    /// フォントファミリー名。None でデフォルト (Fira Code)
+    #[serde(default)]
+    pub font_family: Option<String>,
 }
 
 /// Worker → Gateway: レンダリング結果
@@ -89,6 +92,7 @@ mod tests {
                 show_line_numbers: false,
                 max_line_length: Some(120),
                 background_image: Some("gradient".into()),
+                font_family: None,
             },
         );
         let job2 = RenderJob::new(
@@ -102,6 +106,7 @@ mod tests {
                 show_line_numbers: false,
                 max_line_length: Some(120),
                 background_image: Some("gradient".into()),
+                font_family: None,
             },
         );
         assert_ne!(job1.job_id, job2.job_id);
@@ -121,6 +126,7 @@ mod tests {
                 show_line_numbers: false,
                 max_line_length: None,
                 background_image: None,
+                font_family: None,
             },
         };
         assert_eq!(job.result_key(), "blaze:results:abc-123");
@@ -139,6 +145,7 @@ mod tests {
                 show_line_numbers: true,
                 max_line_length: Some(80),
                 background_image: Some("denim".into()),
+                font_family: Some("HackGen Console NF".into()),
             },
         );
         let json = serde_json::to_string(&job).expect("シリアライズ成功");

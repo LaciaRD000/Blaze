@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use resvg::usvg;
@@ -29,6 +30,8 @@ pub struct RenderOptions {
     pub max_line_length: Option<usize>,
     /// 背景画像ID。None で背景なし
     pub background_image: Option<String>,
+    /// フォントファミリー名。None でデフォルト (Fira Code)
+    pub font_family: Option<String>,
 }
 
 impl Default for RenderOptions {
@@ -40,6 +43,7 @@ impl Default for RenderOptions {
             show_line_numbers: false,
             max_line_length: None,
             background_image: None,
+            font_family: None,
         }
     }
 }
@@ -58,6 +62,8 @@ pub struct Renderer {
     pub theme_set: ThemeSet,
     pub font_db: Arc<usvg::fontdb::Database>,
     pub font_set: canvas::FontSet,
+    /// フォントファミリー名 → FontSet のマップ（各フォント個別のグリフキャッシュを保持）
+    font_sets: HashMap<String, canvas::FontSet>,
     pub shadow_cache: rasterize::ShadowCache,
     pub background_cache: background::BackgroundCache,
 }
@@ -81,6 +87,22 @@ impl Renderer {
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
         let font_set = canvas::FontSet::new();
+
+        // 全フォントファミリー分の FontSet をプリロード
+        let mut font_sets = HashMap::new();
+        font_sets.insert(
+            "Fira Code".to_string(),
+            canvas::FontSet::with_family(canvas::FontFamily::FiraCode),
+        );
+        font_sets.insert(
+            "PlemolJP".to_string(),
+            canvas::FontSet::with_family(canvas::FontFamily::PlemolJP),
+        );
+        font_sets.insert(
+            "HackGen Console NF".to_string(),
+            canvas::FontSet::with_family(canvas::FontFamily::HackGenNF),
+        );
+
         let shadow_cache = rasterize::ShadowCache::new();
         let background_cache = background::BackgroundCache::new();
 
@@ -89,6 +111,7 @@ impl Renderer {
             theme_set,
             font_db: Arc::new(font_db),
             font_set,
+            font_sets,
             shadow_cache,
             background_cache,
         }
@@ -141,6 +164,9 @@ impl Renderer {
         let lines =
             highlight::highlight(code, language, &self.syntax_set, theme);
 
+        // font_family に応じた FontSet を選択（デフォルト: Fira Code）
+        let font_set = self.resolve_font_set(options.font_family.as_deref());
+
         let canvas_options = canvas::CanvasOptions {
             bg_color: [bg.r, bg.g, bg.b],
             opacity: options.opacity as f32,
@@ -167,7 +193,7 @@ impl Renderer {
 
             rasterize::rasterize_direct_with_background(
                 &lines,
-                &self.font_set,
+                font_set,
                 &canvas_options,
                 &self.shadow_cache,
                 bg_pixmap,
@@ -177,7 +203,7 @@ impl Renderer {
         } else {
             rasterize::rasterize_direct(
                 &lines,
-                &self.font_set,
+                font_set,
                 &canvas_options,
                 &self.shadow_cache,
             )
@@ -209,6 +235,14 @@ impl Renderer {
         options: &RenderOptions,
     ) -> Result<String, BlazeError> {
         self.build_svg_internal(code, language, theme_name, options)
+    }
+
+    /// font_family 名から FontSet を解決する。不明な名前はデフォルト (Fira Code) にフォールバック
+    fn resolve_font_set(&self, font_family: Option<&str>) -> &canvas::FontSet {
+        match font_family {
+            Some(name) => self.font_sets.get(name).unwrap_or(&self.font_set),
+            None => &self.font_set,
+        }
     }
 
     /// SVG のピクセルサイズを推定する（svg_builder と同じ計算）
@@ -385,6 +419,24 @@ mod tests {
                 "{name} ({token}) の構文定義が含まれるべき"
             );
         }
+    }
+
+    #[test]
+    fn render_with_hackgen_font_produces_png() {
+        let renderer = Renderer::new();
+        let opts = RenderOptions {
+            font_family: Some("HackGen Console NF".to_string()),
+            ..Default::default()
+        };
+        let png = renderer
+            .render_with_options(
+                "fn main() {}",
+                Some("rust"),
+                "base16-ocean.dark",
+                &opts,
+            )
+            .expect("HackGen NF でレンダリングに成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
 
     #[test]

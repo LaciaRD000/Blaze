@@ -21,6 +21,25 @@ const LINE_NUMBER_WIDTH: f32 = 40.0;
 /// グリフキャッシュの型エイリアス: (char, f32ビット表現) → (Metrics, bitmap)
 type GlyphCache = RwLock<HashMap<(char, u32), (fontdue::Metrics, Vec<u8>)>>;
 
+/// ユーザーが選択可能なフォントファミリー
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FontFamily {
+    FiraCode,
+    PlemolJP,
+    HackGenNF,
+}
+
+impl FontFamily {
+    /// DB/設定文字列からフォントファミリーを解決する。不明な値は Fira Code にフォールバック
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "PlemolJP" => Self::PlemolJP,
+            "HackGen Console NF" => Self::HackGenNF,
+            _ => Self::FiraCode,
+        }
+    }
+}
+
 /// フォントセット（プライマリ + フォールバック + グリフキャッシュ）
 /// グリフキャッシュにより同一 (char, font_px) のラスタライズ結果を再利用する
 pub struct FontSet {
@@ -35,6 +54,8 @@ static FIRA_CODE: &[u8] =
     include_bytes!("../../assets/fonts/FiraCode-Regular.ttf");
 static PLEMOLJP: &[u8] =
     include_bytes!("../../assets/fonts/PlemolJP-Regular.ttf");
+static HACKGEN_NF: &[u8] =
+    include_bytes!("../../assets/fonts/HackGenConsoleNF-Regular.ttf");
 
 impl Default for FontSet {
     fn default() -> Self {
@@ -44,16 +65,27 @@ impl Default for FontSet {
 
 impl FontSet {
     pub fn new() -> Self {
+        Self::with_family(FontFamily::FiraCode)
+    }
+
+    /// 指定フォントファミリーをプライマリとした FontSet を構築する
+    /// プライマリにないグリフはフォールバックでラスタライズされる
+    pub fn with_family(family: FontFamily) -> Self {
+        let (primary_bytes, fallback_bytes): (&[u8], &[u8]) = match family {
+            FontFamily::FiraCode => (FIRA_CODE, PLEMOLJP),
+            FontFamily::PlemolJP => (PLEMOLJP, FIRA_CODE),
+            FontFamily::HackGenNF => (HACKGEN_NF, PLEMOLJP),
+        };
         let primary = fontdue::Font::from_bytes(
-            FIRA_CODE,
+            primary_bytes,
             fontdue::FontSettings::default(),
         )
-        .expect("Fira Code の読み込みに失敗");
+        .expect("プライマリフォントの読み込みに失敗");
         let fallback = fontdue::Font::from_bytes(
-            PLEMOLJP,
+            fallback_bytes,
             fontdue::FontSettings::default(),
         )
-        .expect("PlemolJP の読み込みに失敗");
+        .expect("フォールバックフォントの読み込みに失敗");
         Self {
             primary,
             fallback,
@@ -874,6 +906,32 @@ mod tests {
         assert_eq!(m1.width, m2.width);
         assert_eq!(m1.height, m2.height);
         assert_eq!(b1.as_slice(), b2.as_slice());
+    }
+
+    #[test]
+    fn font_set_with_hackgen_nf_succeeds() {
+        let _fs = FontSet::with_family(FontFamily::HackGenNF);
+    }
+
+    #[test]
+    fn font_set_with_hackgen_nf_rasterizes_ascii() {
+        let fs = FontSet::with_family(FontFamily::HackGenNF);
+        let (metrics, bitmap) = fs.rasterize_cached('A', 28.0);
+        assert!(metrics.width > 0, "HackGen NF で ASCII 文字を描画できるべき");
+        assert!(!bitmap.is_empty());
+    }
+
+    #[test]
+    fn font_set_with_hackgen_nf_rasterizes_cjk() {
+        let fs = FontSet::with_family(FontFamily::HackGenNF);
+        let (metrics, bitmap) = fs.rasterize_cached('あ', 28.0);
+        assert!(metrics.width > 0, "HackGen NF で日本語文字を描画できるべき");
+        assert!(!bitmap.is_empty());
+    }
+
+    #[test]
+    fn font_set_with_plemoljp_succeeds() {
+        let _fs = FontSet::with_family(FontFamily::PlemolJP);
     }
 
     #[test]

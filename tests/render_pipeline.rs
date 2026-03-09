@@ -32,6 +32,7 @@ fn render_pipeline_custom_options() {
         show_line_numbers: true,
         max_line_length: Some(80),
         background_image: None,
+        font_family: None,
     };
 
     let png = renderer

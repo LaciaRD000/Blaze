@@ -125,6 +125,7 @@ async fn render_message(
             blur_radius: theme.blur_radius,
             show_line_numbers: theme.show_line_numbers != 0,
             max_line_length: Some(settings.max_line_length),
+            font_family: Some(theme.font_family.clone()),
             background_image: if theme.background_id == "none" {
                 None
             } else {

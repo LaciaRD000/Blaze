@@ -229,6 +229,7 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
         } else {
             Some(theme.background_id.clone())
         },
+        font_family: Some(theme.font_family.clone()),
     };
 
     let png = tokio::task::spawn_blocking(move || {
