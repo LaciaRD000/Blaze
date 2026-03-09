@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use resvg::usvg;
-
 /// Pixmap を最速設定で PNG エンコードする（png crate 直接利用）
 /// NoFilter + Fast 圧縮で image crate 版より高速
 /// Discord は画像アップロード時に再圧縮するため、Bot 側の高圧縮は不要
@@ -129,46 +127,6 @@ impl ShadowCache {
     }
 }
 
-/// SVG文字列をPNGバイト列に変換する（背景なし）
-pub fn rasterize(
-    svg: &str,
-    font_db: Arc<resvg::usvg::fontdb::Database>,
-) -> Result<Vec<u8>, BlazeError> {
-    let options = usvg::Options {
-        fontdb: font_db,
-        ..Default::default()
-    };
-    let tree = usvg::Tree::from_str(svg, &options)
-        .map_err(|e| BlazeError::rendering(format!("SVGパース失敗: {e}")))?;
-
-    let size = tree.size();
-    let width = (size.width() * SCALE) as u32;
-    let height = (size.height() * SCALE) as u32;
-
-    // シャドウを先に描画し、その上に resvg で直接レンダリング（Pixmap 確保 + draw を1回削減）
-    let shadow = create_shadow_pixmap(size.width(), size.height())?;
-    let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| BlazeError::rendering("Pixmap の作成に失敗"))?;
-
-    final_pixmap.draw_pixmap(
-        0,
-        0,
-        shadow.as_ref(),
-        &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::from_scale(SHADOW_DRAW_SCALE, SHADOW_DRAW_SCALE),
-        None,
-    );
-
-    // resvg は source-over 合成でシャドウの上にコードを描画
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(SCALE, SCALE),
-        &mut final_pixmap.as_mut(),
-    );
-
-    encode_png_fastest(&final_pixmap)
-}
-
 /// tiny_skia::Pixmap (premultiplied alpha) → image::RgbaImage (straight alpha) に変換
 fn pixmap_to_rgba(pixmap: &tiny_skia::Pixmap) -> image::RgbaImage {
     let w = pixmap.width();
@@ -222,76 +180,7 @@ fn blur_pixmap(
     Ok((pixmap, 2.0))
 }
 
-/// 背景 Pixmap 付きでコード SVG をラスタライズする
-/// 背景にぼかしを適用 → 2xスケール → コード SVG を上に合成
-pub fn rasterize_with_background(
-    svg: &str,
-    font_db: Arc<resvg::usvg::fontdb::Database>,
-    bg_pixmap: tiny_skia::Pixmap,
-    blur_radius: f64,
-    blur_margin: u32,
-) -> Result<Vec<u8>, BlazeError> {
-    // 1. SVG パース
-    let options = usvg::Options {
-        fontdb: font_db,
-        ..Default::default()
-    };
-    let tree = usvg::Tree::from_str(svg, &options)
-        .map_err(|e| BlazeError::rendering(format!("SVGパース失敗: {e}")))?;
-
-    let size = tree.size();
-    let width = (size.width() * SCALE) as u32;
-    let height = (size.height() * SCALE) as u32;
-
-    // 2. 背景ぼかしとシャドウ生成を並列実行（互いに独立した処理）
-    let (blur_result, shadow_result) = std::thread::scope(|s| {
-        let shadow_handle =
-            s.spawn(|| create_shadow_pixmap(size.width(), size.height()));
-        let blur_result = blur_pixmap(bg_pixmap, blur_radius);
-        let shadow_result = shadow_handle.join().expect("シャドウスレッドがパニック");
-        (blur_result, shadow_result)
-    });
-    let (blurred_bg, blur_scale) = blur_result?;
-    let shadow = shadow_result?;
-
-    // 4. 最終キャンバスに合成: 背景 → シャドウ → resvg 直接描画
-    let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
-
-    // 背景を描画（blur_scale × SCALE で拡大、blur_margin 分オフセット）
-    let bg_draw_scale = SCALE * blur_scale;
-    let offset = -(blur_margin as f32) * SCALE;
-    final_pixmap.draw_pixmap(
-        0,
-        0,
-        blurred_bg.as_ref(),
-        &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::from_scale(bg_draw_scale, bg_draw_scale)
-            .pre_translate(offset / bg_draw_scale, offset / bg_draw_scale),
-        None,
-    );
-
-    // シャドウを描画
-    final_pixmap.draw_pixmap(
-        0,
-        0,
-        shadow.as_ref(),
-        &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::from_scale(SHADOW_DRAW_SCALE, SHADOW_DRAW_SCALE),
-        None,
-    );
-
-    // resvg で直接 final_pixmap に描画（code_pixmap の確保 + draw を省略）
-    resvg::render(
-        &tree,
-        tiny_skia::Transform::from_scale(SCALE, SCALE),
-        &mut final_pixmap.as_mut(),
-    );
-
-    encode_png_fastest(&final_pixmap)
-}
-
-/// SVG パイプラインを完全に排除した直接描画パス（背景なし）
+/// 直接描画パス（背景なし）
 /// usvg パース + resvg レンダリングの代わりに fontdue + tiny_skia で直接描画
 pub fn rasterize_direct(
     lines: &[HighlightedLine],
@@ -421,18 +310,6 @@ pub fn rasterize_direct_with_background(
 mod tests {
     use super::*;
 
-    fn minimal_svg() -> String {
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
-            <rect width="200" height="100" fill="#1e1e2e"/>
-            <text x="10" y="30" font-size="14" fill="#ffffff">Hello</text>
-        </svg>"##
-            .to_string()
-    }
-
-    fn empty_font_db() -> Arc<resvg::usvg::fontdb::Database> {
-        Arc::new(resvg::usvg::fontdb::Database::new())
-    }
-
     #[test]
     fn encode_png_fastest_produces_valid_png() {
         let pixmap = tiny_skia::Pixmap::new(100, 50)
@@ -452,38 +329,6 @@ mod tests {
             .expect("PNGデコードに成功するべき");
         assert_eq!(decoded.width(), 200);
         assert_eq!(decoded.height(), 100);
-    }
-
-    #[test]
-    fn rasterize_valid_svg_returns_png_bytes() {
-        let svg = minimal_svg();
-        let db = empty_font_db();
-        let png = rasterize(&svg, db).expect("ラスタライズに成功するべき");
-        assert!(!png.is_empty());
-        // PNG マジックバイト
-        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
-    }
-
-    #[test]
-    fn rasterize_invalid_svg_returns_error() {
-        let db = empty_font_db();
-        let result = rasterize("not valid svg", db);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn rasterize_with_background_produces_png() {
-        let svg = minimal_svg();
-        let db = empty_font_db();
-
-        // 小さなグラデーション背景
-        let bg = super::super::background::generate_gradient_pixmap(224, 124)
-            .expect("背景Pixmap生成に成功するべき");
-
-        let png = rasterize_with_background(&svg, db, bg, 8.0, 12)
-            .expect("背景合成ラスタライズに成功するべき");
-        assert!(!png.is_empty());
-        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
 
     #[test]
@@ -550,21 +395,6 @@ mod tests {
             alpha > 0,
             "シャドウの中央は不透明であるべき: alpha={alpha}"
         );
-    }
-
-    #[test]
-    fn rasterize_with_background_not_all_transparent() {
-        let svg = minimal_svg();
-        let db = empty_font_db();
-        let bg = super::super::background::generate_gradient_pixmap(224, 124)
-            .expect("背景Pixmap生成に成功するべき");
-
-        let png = rasterize_with_background(&svg, db, bg, 8.0, 12)
-            .expect("背景合成ラスタライズに成功するべき");
-        let pixmap = tiny_skia::Pixmap::decode_png(&png)
-            .expect("PNGデコードに成功するべき");
-        let has_opaque = pixmap.data().chunks(4).any(|px| px[3] > 0);
-        assert!(has_opaque, "合成結果は透明でないピクセルを含むべき");
     }
 
     // --- 直接描画パスのテスト ---
