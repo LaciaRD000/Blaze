@@ -282,14 +282,14 @@ log_level = "info"
 - テクスチャ背景（denim, repeated-square-dark）は `image::imageops::overlay` でタイリング
 - 2x スケールを適用し、Discord の高DPI表示でもシャープに表示される高解像度画像を生成する
 - **SVGパイプライン完全排除（Phase 12）**: メインのレンダリングパスから usvg/resvg を完全に排除。fontdue でグリフを個別にラスタライズし、tiny_skia の PathBuilder で描画プリミティブを構築して直接 Pixmap に描画する。usvg の SVG パース（~50ms）を完全に排除
-- **canvas.rs 直接描画**: `FontSet`（fontdue::Font）がフォントフォールバック付きでグリフをラスタライズ。`render_code_pixmap()` が角丸矩形、タイトルバー、コード行を tiny_skia::Pixmap に直接描画
-- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいラスタライズ関数。canvas.rs の Pixmap をシャドウ・背景と合成
+- **canvas.rs 直接描画**: `FontSet`（fontdue::Font + RwLock グリフキャッシュ）がフォントフォールバック付きで `rasterize_cached()` でキャッシュ済みグリフを返す。`render_code_onto_pixmap()` が角丸矩形、タイトルバー、コード行を既存の Pixmap に直接描画（Pixmap 二重確保を排除）。`draw_glyph` は事前クリッピング計算で per-pixel bounds check を排除。トークン列は `Cow` で借用し、`max_line_length == None` 時の clone を回避
+- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しないラスタライズ関数。`rasterize_direct` は `render_code_onto_pixmap` で final_pixmap に直接描画し、中間 Pixmap 確保を排除
 - 背景ぼかしは `image::imageops::blur` による直接ピクセル操作で処理。ダウンスケール最適化（1/2 に縮小 → ぼかし → 復元）で計算量を約1/4に削減
 - ドロップシャドウは tiny_skia で矩形を直接描画し、1/4ダウンスケール+ぼかしを行う。`create_shadow_pixmap` はダウンスケールされた Pixmap を返し、合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（8.0x）でアップスケールする
-- **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14）**: シャドウ Pixmap を `(svg_width, svg_height)` でキャッシュ。シャドウはサイズのみに依存し、パターン数は高々 ~50。キャッシュヒット時は即座に返却し、~28ms の短縮を実現（50行背景なし: 101ms→73ms）。初回リクエスト（キャッシュミス）のみフル生成コストが発生
+- **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14→15）**: `RwLock<HashMap<_, Arc<Pixmap>>>` でシャドウ Pixmap をキャッシュ。RwLock で読み取りは共有ロック、Arc で Pixmap clone を pointer clone に置換。シャドウはサイズのみに依存し、パターン数は高々 ~50
 - 背景パスでは ShadowCache からシャドウを即座に取得し、背景ぼかし+コード描画を `std::thread::scope` で2スレッド並列実行（キャッシュ導入前の3スレッドから削減）
-- PNG エンコードは `CompressionType::Fast` で高速に出力（Discord 側の再圧縮を考慮）
-- 累積最適化効果: 50行コード（背景あり）で 823ms → 88ms（89%削減）。背景なしではキャッシュヒット時 101ms → 73ms（Phase 14）
+- PNG エンコードは `png` crate を直接利用し `Compression::Fast` + `FilterType::Sub` で高速に出力（Discord 側の再圧縮を考慮）
+- 累積最適化効果: 50行コード（背景あり）で 823ms → 88ms（89%削減）。背景なし: 73ms → 39ms（Phase 15, 46%削減, 累積95%削減）
 
 ### 12.2 セキュリティ
 

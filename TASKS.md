@@ -111,3 +111,14 @@
 - [x] Renderer に shadow_cache フィールド追加
 - [x] ベンチマーク計測（cache miss=101ms → hit=73ms、28ms 改善）
 - [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）
+
+## Phase 15: レンダリング高速化
+
+- [x] グリフキャッシュ（RwLock<HashMap> ベース、rasterize_cached）
+- [x] PNG エンコード高速化（png crate 直接利用、Compression::Fast + FilterType::Sub）
+- [x] Pixmap 二重確保排除（render_code_onto_pixmap で final_pixmap に直接描画）
+- [x] draw_glyph クリッピング事前計算（per-pixel bounds check 排除）
+- [x] tokens.clone() 排除（Cow<[StyledToken]>）
+- [x] ShadowCache RwLock + Arc<Pixmap>（Mutex→RwLock、Pixmap clone→pointer clone）
+- [x] ベンチマーク計測（50行背景なし: 73ms→39ms、46%削減、累積95%削減）
+- [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）

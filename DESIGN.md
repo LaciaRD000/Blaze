@@ -795,6 +795,7 @@ insta = "1"            # スナップショットテスト
 | **Phase 11** | シャドウ1/4ダウンスケール + resvg直接描画 + 並列実行 + font-family集約 | パイプライン高速化（823ms→143ms, 83%削減） |
 | **Phase 12** | SVGパイプライン排除 + fontdue/tiny_skia直接描画 (canvas.rs) | SVGパイプライン完全排除（143ms→88ms, 累積89%削減） |
 | **Phase 14** | シャドウ Pixmap サイズ別キャッシュ (ShadowCache) | キャッシュヒット時 ~28ms 短縮（101ms→73ms, 50行背景なし） |
+| **Phase 15** | グリフキャッシュ + PNG最速化 + Pixmap二重確保排除 + draw_glyphクリッピング + Cow + ShadowCache RwLock+Arc | レンダリング高速化（73ms→39ms, 46%削減, 累積95%削減） |
 
 ※ 各フェーズはRGBCサイクル（Red→Green→Blue→Commit）で進行する
 
@@ -806,18 +807,18 @@ insta = "1"            # スナップショットテスト
 - **Gateway/Worker 分離**: Discord I/O（Gateway）と CPUバウンドなレンダリング（Worker）を別プロセスに分離するマイクロサービス構成をサポートする。Redis リストベースのキューで通信し、Worker の水平スケーリングが可能。モノリスモードも後方互換として維持する
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGパイプライン排除（Phase 12）**: メインのレンダリングパスから usvg/resvg を完全に排除。fontdue でグリフを個別にラスタライズし、tiny_skia の PathBuilder で描画プリミティブ（角丸矩形、円、線）を構築して直接 Pixmap に描画する。usvg の SVG パース（~50ms）を完全に排除し、38%の高速化を実現
-- **canvas.rs 直接描画モジュール**: `FontSet` が Fira Code (primary) と PlemolJP (fallback) の fontdue::Font を保持。`render_code_pixmap()` がハイライト済みコード行を受け取り、tiny_skia::Pixmap に直接描画する。各文字は `lookup_glyph_index` でフォントを選択し、fontdue でラスタライズしたビットマップを source-over compositing で α ブレンド
+- **canvas.rs 直接描画モジュール**: `FontSet` が Fira Code (primary) と PlemolJP (fallback) の fontdue::Font と `RwLock<HashMap>` ベースのグリフキャッシュを保持。`render_code_onto_pixmap()` がハイライト済みコード行を受け取り、既存の Pixmap に直接描画する（Pixmap 二重確保を回避）。各文字は `lookup_glyph_index` でフォントを選択し、`rasterize_cached()` でキャッシュ付きラスタライズを行い、事前クリッピング計算で per-pixel bounds check を排除した `draw_glyph` で α ブレンド
 - **svg_builder.rs はスナップショットテスト専用**: SVG 文字列生成はメインパスでは使用されない。`insta` によるスナップショットテストでレンダリング出力の視覚的回帰を検知するためにのみ保持
 - **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
 - **ドロップシャドウの直接描画**: SVG の `feDropShadow` フィルタを除去し、tiny_skia で矩形を描画 → `image::imageops::blur` でぼかし → 2xスケールで合成。resvg 内部のフィルタ処理（パイプライン全体の30〜50%を占めていた）を回避
 - **シャドウの1/4ダウンスケール**: `create_shadow_pixmap` は1/4サイズで描画+ぼかしを行い、ダウンスケールされた Pixmap を返す。合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（= SCALE × 4.0 = 8.0）でアップスケールするため、upscale 処理を `draw_pixmap` に委ね、中間 Pixmap のメモリ確保を削減
 - **ぼかし処理のダウンスケール最適化**: 背景ぼかしは1/2にダウンスケール → blur_radius も1/2に。`blur_pixmap` はダウンスケールされた Pixmap とスケール倍率のタプルを返し、元サイズへの復元は `draw_pixmap` のスケール変換に委ねる。ぼかし計算量を約1/4に削減（ぼかし後は細部が消えるため品質劣化なし）
 - **resvg 直接描画（SVGパス）**: SVG ベースのレガシーパス（`rasterize()` / `rasterize_with_background()`）では、中間の `code_pixmap` を確保せず `resvg::render()` で直接 `final_pixmap` に描画する。ただしメインパスでは使用されない
-- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいエントリポイント。canvas.rs の `render_code_pixmap()` で生成した Pixmap をシャドウ・背景と合成する。`&ShadowCache` を引数に取り、シャドウ Pixmap をキャッシュから取得する
-- **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14）**: `ShadowCache`（`Mutex<HashMap<(u32, u32), tiny_skia::Pixmap>>`）がシャドウ Pixmap を `(svg_width, svg_height)` でキャッシュする。シャドウはコード内容やテーマに依存せず、サイズのみで決まるため高いヒット率を実現。幅は常に 864px、高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50。`get_or_create()` でキャッシュヒット時はクローンを返し、ミス時は生成して格納する。ベンチマーク: キャッシュミス 101ms → ヒット 73ms（50行背景なし、~28ms 短縮）
+- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいエントリポイント。`rasterize_direct` は `render_code_onto_pixmap()` で `final_pixmap` に直接描画し、中間 Pixmap の確保を排除。`&ShadowCache` を引数に取り、シャドウ Pixmap を `Arc` でキャッシュから取得する
+- **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14→15）**: `ShadowCache`（`RwLock<HashMap<(u32, u32), Arc<tiny_skia::Pixmap>>>`）がシャドウ Pixmap を `(svg_width, svg_height)` でキャッシュする。RwLock で読み取りは共有ロック、Arc で Pixmap clone（数十KB memcpy）を pointer clone に置換。シャドウはコード内容やテーマに依存せず、サイズのみで決まるため高いヒット率を実現。幅は常に 864px、高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50
 - **背景ぼかし・コード描画の並列実行**: `rasterize_direct_with_background()` ではシャドウを `ShadowCache` から即座に取得し、`std::thread::scope` で `blur_pixmap` と `render_code_pixmap` の2処理を並列実行する（キャッシュ導入前は3スレッドだったが、シャドウ生成が不要になり2スレッドに削減）
 - **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
-- **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `CompressionType::Fast` + `FilterType::Sub` で高速にエンコードし、CPU コストを削減する
+- **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `png` crate を直接利用し `Compression::Fast` + `FilterType::Sub` で高速にエンコードする。`image` crate 経由より直接的で、`Vec::with_capacity` による事前確保でアロケーションも最適化
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
 - **コードブロック抽出は正規表現**: `` ```(\w*)\n([\s\S]*?)``` `` で言語タグとコード本体を分離
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する

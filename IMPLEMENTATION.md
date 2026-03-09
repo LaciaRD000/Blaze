@@ -601,3 +601,59 @@ DESIGN.md の設計に基づき、RGBCサイクル（Red→Green→Blue→Commit
 - コミット: `docs: Phase 14 シャドウキャッシュをドキュメントに反映`
 
 **Phase 14 完了確認**: 全テストが合格し、clippy 警告ゼロであること。キャッシュヒット時に ~28ms の短縮を達成。
+
+---
+
+## Phase 15: レンダリング高速化（グリフキャッシュ + PNG + Pixmap + draw_glyph + Cow + ShadowCache）
+
+### Step 15.1: グリフキャッシュの導入
+
+- `FontSet` に `RwLock<HashMap<(char, u32), (Metrics, Vec<u8>)>>` のグリフキャッシュを追加
+- `rasterize_cached()`: 読み取りロックでキャッシュヒットを確認し、ミス時のみラスタライズしてキャッシュに格納
+- `render_code_onto_pixmap` と `draw_text` で `rasterize_cached` を使用
+- Red: `rasterize_cached_returns_same_as_rasterize_char`, `rasterize_cached_hits_cache_on_second_call`, `rasterize_cached_fallback_font`
+- コミット: `perf: グリフキャッシュの導入で同一文字の再ラスタライズを回避`
+
+### Step 15.2: PNG エンコードの高速化
+
+- `image` crate の `PngEncoder` を `png` crate 直接利用に変更
+- `Compression::Fast` + `FilterType::Sub` + `Vec::with_capacity` で最適化
+- 旧 `encode_png_fast` を削除し `encode_png_fastest` に統一
+- Red: `encode_png_fastest_roundtrip_preserves_dimensions`
+- コミット: `perf: PNG エンコードを png crate 直接利用に切り替え`
+
+### Step 15.3: Pixmap 二重確保の排除
+
+- `canvas::render_code_onto_pixmap(&mut pixmap, ...)` を新設（既存 Pixmap に直接描画）
+- `render_code_pixmap` は `render_code_onto_pixmap` のラッパーに変更
+- `rasterize_direct` で `final_pixmap` に直接描画し、中間 `code_pixmap` の確保+合成を排除
+- Red: 既存テストが Green の役割
+- コミット: `perf: rasterize_direct の Pixmap 二重確保を排除`
+
+### Step 15.4: draw_glyph のクリッピング事前計算
+
+- ループ前に `(x_start..x_end, y_start..y_end)` を計算し、内部ループの per-pixel bounds check を排除
+- `unsafe` は使わず safe コードで実装
+- Red: 既存テストが Green の役割
+- コミット: `perf: draw_glyph のクリッピング事前計算で per-pixel bounds check を排除`
+
+### Step 15.5: tokens.clone() の排除
+
+- `Cow<[StyledToken]>` で `max_line_length == None` 時は借用のまま処理
+- Red: 既存テストが Green の役割
+- コミット: `perf: tokens.clone() を Cow で排除し不要なヒープ確保を回避`
+
+### Step 15.6: ShadowCache を RwLock + Arc に変更
+
+- `Mutex<HashMap<_, Pixmap>>` → `RwLock<HashMap<_, Arc<Pixmap>>>`
+- 読み取りは共有ロック、Pixmap clone を pointer clone に置換
+- コミット: `perf: ShadowCache を RwLock + Arc<Pixmap> に変更`
+
+### Step 15.7: ベンチマーク + ドキュメント更新
+
+- ベンチマーク結果: 50行背景なし — 73ms → 39ms（46%削減、累積95%削減）
+- 3行: 4.6ms、21行: 15ms、50行: 39ms
+- DESIGN.md / SPEC.md / IMPLEMENTATION.md / TASKS.md に Phase 15 の内容を反映
+- コミット: `docs: Phase 15 レンダリング高速化をドキュメントに反映`
+
+**Phase 15 完了確認**: 全テスト（131 unit + 11 integration）が合格し、clippy 警告ゼロであること。
