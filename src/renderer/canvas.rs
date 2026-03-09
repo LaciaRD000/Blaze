@@ -154,11 +154,27 @@ pub fn render_code_pixmap(
     let mut pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("キャンバスPixmap作成に失敗"))?;
 
+    render_code_onto_pixmap(&mut pixmap, lines, font_set, options, scale);
+    Ok(pixmap)
+}
+
+/// 既存の Pixmap にハイライト済みコード行を直接描画する
+/// Pixmap の確保を呼び出し側に委ねることで、二重確保を回避できる
+pub fn render_code_onto_pixmap(
+    pixmap: &mut tiny_skia::Pixmap,
+    lines: &[HighlightedLine],
+    font_set: &FontSet,
+    options: &CanvasOptions,
+    scale: f32,
+) {
+    let (_, total_h) =
+        calculate_dimensions(lines.len(), options.title_bar_style);
+
     let s = scale; // 短縮エイリアス
 
     // ウィンドウ背景（角丸 + 半透明）
     draw_rounded_rect(
-        &mut pixmap,
+        pixmap,
         SHADOW_MARGIN * s,
         SHADOW_MARGIN * s,
         WINDOW_WIDTH * s,
@@ -175,19 +191,19 @@ pub fn render_code_pixmap(
     };
     match options.title_bar_style {
         "macos" => draw_macos_title_bar(
-            &mut pixmap,
+            pixmap,
             font_set,
             s,
             options.language,
         ),
         "linux" => draw_linux_title_bar(
-            &mut pixmap,
+            pixmap,
             font_set,
             s,
             options.language,
         ),
         "plain" => draw_plain_title_bar(
-            &mut pixmap,
+            pixmap,
             font_set,
             s,
             options.language,
@@ -211,7 +227,7 @@ pub fn render_code_pixmap(
         if options.show_line_numbers {
             let num_str = format!("{}", i + 1);
             draw_text(
-                &mut pixmap,
+                pixmap,
                 font_set,
                 &num_str,
                 (SHADOW_MARGIN + PADDING_X) * s,
@@ -237,7 +253,7 @@ pub fn render_code_pixmap(
                 let (metrics, bitmap) =
                     font_set.rasterize_cached(ch, font_px);
                 draw_glyph(
-                    &mut pixmap,
+                    pixmap,
                     &bitmap,
                     &metrics,
                     x as i32 + metrics.xmin,
@@ -249,8 +265,6 @@ pub fn render_code_pixmap(
             }
         }
     }
-
-    Ok(pixmap)
 }
 
 /// 角丸矩形を描画する

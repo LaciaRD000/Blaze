@@ -308,14 +308,12 @@ pub fn rasterize_direct(
         canvas_options.title_bar_style,
     );
 
-    // シャドウ（キャッシュ済み）→ コード描画の順
+    // シャドウ（キャッシュ済み）→ コード直接描画の順
+    // code_pixmap を別途確保せず、final_pixmap に直接描画して Pixmap 二重確保を回避
     let shadow = shadow_cache.get_or_create(svg_w, svg_h)?;
-    let code_pixmap =
-        canvas::render_code_pixmap(lines, font_set, canvas_options, SCALE)?;
 
-    // final_pixmap にシャドウ → コードの順で描画
-    let width = code_pixmap.width();
-    let height = code_pixmap.height();
+    let width = (svg_w * SCALE) as u32;
+    let height = (svg_h * SCALE) as u32;
     let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("Pixmap作成に失敗"))?;
 
@@ -331,13 +329,13 @@ pub fn rasterize_direct(
         None,
     );
 
-    final_pixmap.draw_pixmap(
-        0,
-        0,
-        code_pixmap.as_ref(),
-        &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::identity(),
-        None,
+    // コードを final_pixmap に直接描画
+    canvas::render_code_onto_pixmap(
+        &mut final_pixmap,
+        lines,
+        font_set,
+        canvas_options,
+        SCALE,
     );
 
     encode_png_fastest(&final_pixmap)
