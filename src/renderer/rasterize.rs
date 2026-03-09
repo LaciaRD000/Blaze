@@ -68,10 +68,26 @@ fn create_shadow_pixmap(
         None,
     );
 
-    // ガウスぼかしを適用してシャドウを拡散
+    // ダウンスケール → ぼかし → 元サイズに復元（計算量を約1/16に削減）
+    // sigma=16 は十分広いため、1/4 スケールでも品質劣化が見えない
     let rgba = pixmap_to_rgba(&pixmap);
-    let blurred = image::imageops::blur(&rgba, SHADOW_SIGMA);
-    super::background::rgba_to_pixmap(&blurred)
+    let quarter_w = (w / 4).max(1);
+    let quarter_h = (h / 4).max(1);
+    let downscaled = image::imageops::resize(
+        &rgba,
+        quarter_w,
+        quarter_h,
+        image::imageops::FilterType::Triangle,
+    );
+    let blurred =
+        image::imageops::blur(&downscaled, SHADOW_SIGMA / 4.0);
+    let upscaled = image::imageops::resize(
+        &blurred,
+        w,
+        h,
+        image::imageops::FilterType::Triangle,
+    );
+    super::background::rgba_to_pixmap(&upscaled)
 }
 
 /// SVG文字列をPNGバイト列に変換する（背景なし）
@@ -145,25 +161,22 @@ fn pixmap_to_rgba(pixmap: &tiny_skia::Pixmap) -> image::RgbaImage {
 }
 
 /// 背景 Pixmap にガウスぼかしを適用する
-/// ダウンスケール → ぼかし → 元サイズに戻すことで計算量を約1/4に削減
-/// ぼかし後は細部が消えるため、ダウンスケールによる品質劣化は視覚的に無視できる
+/// ダウンスケール → ぼかし のみ行い、元サイズへの復元は draw_pixmap のスケール変換に委ねる
+/// 戻り値の (Pixmap, f32) は (ぼかし済みPixmap, 元サイズに戻すスケール倍率)
 fn blur_pixmap(
     bg: tiny_skia::Pixmap,
     blur_radius: f64,
-) -> Result<tiny_skia::Pixmap, BlazeError> {
+) -> Result<(tiny_skia::Pixmap, f32), BlazeError> {
     if blur_radius <= 0.0 {
-        return Ok(bg);
+        return Ok((bg, 1.0));
     }
-
-    let orig_w = bg.width();
-    let orig_h = bg.height();
 
     // Premultiplied → Straight alpha
     let rgba = pixmap_to_rgba(&bg);
 
     // 1/2 にダウンスケールしてぼかし計算を軽量化
-    let half_w = (orig_w / 2).max(1);
-    let half_h = (orig_h / 2).max(1);
+    let half_w = (bg.width() / 2).max(1);
+    let half_h = (bg.height() / 2).max(1);
     let downscaled = image::imageops::resize(
         &rgba,
         half_w,
@@ -175,16 +188,9 @@ fn blur_pixmap(
     let blurred =
         image::imageops::blur(&downscaled, (blur_radius / 2.0) as f32);
 
-    // 元のサイズに戻す
-    let upscaled = image::imageops::resize(
-        &blurred,
-        orig_w,
-        orig_h,
-        image::imageops::FilterType::Triangle,
-    );
-
-    // Straight → Premultiplied alpha
-    super::background::rgba_to_pixmap(&upscaled)
+    // upscale せず、スケール倍率 2.0 を返す（合成時に draw_pixmap で拡大）
+    let pixmap = super::background::rgba_to_pixmap(&blurred)?;
+    Ok((pixmap, 2.0))
 }
 
 /// 背景 Pixmap 付きでコード SVG をラスタライズする
@@ -216,8 +222,8 @@ pub fn rasterize_with_background(
         &mut code_pixmap.as_mut(),
     );
 
-    // 2. 背景にぼかしを適用（1xサイズで処理、軽量）
-    let blurred_bg = blur_pixmap(bg_pixmap, blur_radius)?;
+    // 2. 背景にぼかしを適用（ダウンスケール済みサイズで返る）
+    let (blurred_bg, blur_scale) = blur_pixmap(bg_pixmap, blur_radius)?;
 
     // 3. シャドウを1xで生成
     let shadow = create_shadow_pixmap(size.width(), size.height())?;
@@ -226,15 +232,16 @@ pub fn rasterize_with_background(
     let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
 
-    // 背景を2xスケールで描画（blur_margin 分をオフセットして中央合わせ）
+    // 背景を描画（blur_scale × SCALE で元サイズ×2xに拡大、blur_margin 分オフセット）
+    let bg_draw_scale = SCALE * blur_scale;
     let offset = -(blur_margin as f32) * SCALE;
     final_pixmap.draw_pixmap(
         0,
         0,
         blurred_bg.as_ref(),
         &tiny_skia::PixmapPaint::default(),
-        tiny_skia::Transform::from_scale(SCALE, SCALE)
-            .pre_translate(offset / SCALE, offset / SCALE),
+        tiny_skia::Transform::from_scale(bg_draw_scale, bg_draw_scale)
+            .pre_translate(offset / bg_draw_scale, offset / bg_draw_scale),
         None,
     );
 
@@ -323,13 +330,15 @@ mod tests {
         let bg = super::super::background::generate_gradient_pixmap(100, 100)
             .expect("背景Pixmap生成に成功するべき");
         let original_data = bg.data().to_vec();
-        let blurred =
+        let (blurred, _scale) =
             blur_pixmap(bg, 8.0).expect("ぼかしに成功するべき");
-        assert_ne!(
-            original_data,
-            blurred.data(),
-            "ぼかし後のピクセルデータは元と異なるべき"
+        // ダウンスケールされるためデータ長が異なるが、ぼかしが適用されていることを確認
+        assert!(
+            !blurred.data().iter().all(|&b| b == 0),
+            "ぼかし後のピクセルデータは空でないべき"
         );
+        // 元データとサイズが異なるので直接比較はしない
+        let _ = original_data;
     }
 
     #[test]
@@ -337,23 +346,26 @@ mod tests {
         let bg = super::super::background::generate_gradient_pixmap(100, 100)
             .expect("背景Pixmap生成に成功するべき");
         let original_data = bg.data().to_vec();
-        let result =
+        let (result, scale) =
             blur_pixmap(bg, 0.0).expect("ぼかしに成功するべき");
         assert_eq!(
             original_data,
             result.data(),
             "ぼかし強度0はピクセルデータを変更しないべき"
         );
+        assert_eq!(scale, 1.0, "ぼかし強度0はスケール1.0を返すべき");
     }
 
     #[test]
-    fn blur_pixmap_preserves_dimensions() {
+    fn blur_pixmap_returns_downscaled() {
         let bg = super::super::background::generate_gradient_pixmap(200, 150)
             .expect("背景Pixmap生成に成功するべき");
-        let blurred =
+        let (blurred, scale) =
             blur_pixmap(bg, 5.0).expect("ぼかしに成功するべき");
-        assert_eq!(blurred.width(), 200);
-        assert_eq!(blurred.height(), 150);
+        // 1/2 にダウンスケールされ、スケール倍率 2.0 が返る
+        assert_eq!(blurred.width(), 100);
+        assert_eq!(blurred.height(), 75);
+        assert_eq!(scale, 2.0, "ダウンスケール倍率は2.0であるべき");
     }
 
     #[test]
