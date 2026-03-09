@@ -201,11 +201,16 @@ pub fn rasterize_with_background(
     let width = (size.width() * SCALE) as u32;
     let height = (size.height() * SCALE) as u32;
 
-    // 2. 背景にぼかしを適用（ダウンスケール済みサイズで返る）
-    let (blurred_bg, blur_scale) = blur_pixmap(bg_pixmap, blur_radius)?;
-
-    // 3. シャドウ生成
-    let shadow = create_shadow_pixmap(size.width(), size.height())?;
+    // 2. 背景ぼかしとシャドウ生成を並列実行（互いに独立した処理）
+    let (blur_result, shadow_result) = std::thread::scope(|s| {
+        let shadow_handle =
+            s.spawn(|| create_shadow_pixmap(size.width(), size.height()));
+        let blur_result = blur_pixmap(bg_pixmap, blur_radius);
+        let shadow_result = shadow_handle.join().expect("シャドウスレッドがパニック");
+        (blur_result, shadow_result)
+    });
+    let (blurred_bg, blur_scale) = blur_result?;
+    let shadow = shadow_result?;
 
     // 4. 最終キャンバスに合成: 背景 → シャドウ → resvg 直接描画
     let mut final_pixmap = tiny_skia::Pixmap::new(width, height)

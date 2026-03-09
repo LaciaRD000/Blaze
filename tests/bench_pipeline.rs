@@ -316,6 +316,13 @@ fn run_benchmark(label: &str, code: &str, language: Option<&str>) {
         total,
     );
 
+    // 背景あり end-to-end（production コードの実測）
+    let _ = renderer.render_with_options(code, language, theme_name, &options);
+    let t = Instant::now();
+    let _ = renderer.render_with_options(code, language, theme_name, &options).unwrap();
+    let with_bg = t.elapsed().as_micros();
+    println!("  背景あり e2e: {}μs", with_bg);
+
     // 背景なし end-to-end
     let _ = renderer.render_with_options(code, language, theme_name, &RenderOptions::default());
     let t = Instant::now();

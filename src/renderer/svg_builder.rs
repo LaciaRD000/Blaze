@@ -91,9 +91,10 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
 
     // ウィンドウグループ（角丸）
     // シャドウは rasterize 側で tiny_skia により直接描画（resvg のフィルタ処理を回避）
+    // font-family を親 <g> に集約し、usvg のフォント解決回数を削減
     let _ = write!(
         svg,
-        r##"<g transform="translate({SHADOW_MARGIN},{SHADOW_MARGIN})">"##
+        r##"<g transform="translate({SHADOW_MARGIN},{SHADOW_MARGIN})" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}">"##
     );
 
     // ウィンドウ背景（角丸 + 半透明）
@@ -128,13 +129,13 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
             let line_num = i + 1;
             let _ = write!(
                 svg,
-                r##"<text x="{PADDING_X}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" fill="#6c7086" text-anchor="start">{line_num}</text>"##
+                r##"<text x="{PADDING_X}" y="{y}" fill="#6c7086" text-anchor="start">{line_num}</text>"##
             );
         }
 
         let _ = write!(
             svg,
-            r##"<text x="{code_x}" y="{y}" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="{FONT_SIZE}" xml:space="preserve">"##
+            r##"<text x="{code_x}" y="{y}" xml:space="preserve">"##
         );
 
         // max_line_length が指定されている場合はトリミング
@@ -192,7 +193,7 @@ fn build_plain_title_bar(svg: &mut String, language: Option<&str>) {
         let escaped_lang = escape_for_svg(lang);
         let _ = write!(
             svg,
-            r##"<text x="400" y="22" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="13" fill="#6c7086" text-anchor="middle">{escaped_lang}</text>"##
+            r##"<text x="400" y="22" font-size="13" fill="#6c7086" text-anchor="middle">{escaped_lang}</text>"##
         );
     }
 }
@@ -209,7 +210,7 @@ fn build_macos_title_bar(svg: &mut String, language: Option<&str>) {
         let escaped_lang = escape_for_svg(lang);
         let _ = write!(
             svg,
-            r##"<text x="400" y="22" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="13" fill="#6c7086" text-anchor="middle">{escaped_lang}</text>"##
+            r##"<text x="400" y="22" font-size="13" fill="#6c7086" text-anchor="middle">{escaped_lang}</text>"##
         );
     }
 }
@@ -225,7 +226,7 @@ fn build_linux_title_bar(
         let escaped_lang = escape_for_svg(lang);
         let _ = write!(
             svg,
-            r##"<text x="16" y="22" font-family="'Fira Code', 'PlemolJP', sans-serif" font-size="13" fill="#6c7086">{escaped_lang}</text>"##
+            r##"<text x="16" y="22" font-size="13" fill="#6c7086">{escaped_lang}</text>"##
         );
     }
 
