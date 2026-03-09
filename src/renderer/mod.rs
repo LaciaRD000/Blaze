@@ -14,6 +14,7 @@ static THEME_SET_DUMP: &[u8] =
 use crate::error::BlazeError;
 
 pub mod background;
+pub mod canvas;
 pub mod highlight;
 pub mod rasterize;
 pub mod svg_builder;
@@ -56,6 +57,7 @@ pub struct Renderer {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
     pub font_db: Arc<usvg::fontdb::Database>,
+    pub font_set: canvas::FontSet,
     pub background_cache: background::BackgroundCache,
 }
 
@@ -77,12 +79,14 @@ impl Renderer {
                 .expect("ThemeSet のデシリアライズに失敗");
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
+        let font_set = canvas::FontSet::new();
         let background_cache = background::BackgroundCache::new();
 
         Self {
             syntax_set,
             theme_set,
             font_db: Arc::new(font_db),
+            font_set,
             background_cache,
         }
     }
@@ -102,9 +106,8 @@ impl Renderer {
         )
     }
 
-    /// コードを画像化する: highlight → SVG → PNG（オプション指定）
-    /// 背景ありの場合: SVG(コードのみ) + 背景Pixmap を rasterize 側で合成
-    /// 背景なしの場合: SVG → PNG の従来パス
+    /// コードを画像化する: highlight → 直接描画 → PNG（オプション指定）
+    /// SVG パイプライン (usvg/resvg) を完全に排除し、fontdue + tiny_skia で直接描画
     pub fn render_with_options(
         &self,
         code: &str,
@@ -112,8 +115,37 @@ impl Renderer {
         theme_name: &str,
         options: &RenderOptions,
     ) -> Result<Vec<u8>, BlazeError> {
-        let svg =
-            self.build_svg_internal(code, language, theme_name, options)?;
+        let theme = self
+            .theme_set
+            .themes
+            .get(theme_name)
+            .or_else(|| self.theme_set.themes.get("base16-ocean.dark"))
+            .ok_or_else(|| {
+                BlazeError::rendering("デフォルトテーマが見つかりません")
+            })?;
+
+        let bg =
+            theme
+                .settings
+                .background
+                .unwrap_or(syntect::highlighting::Color {
+                    r: 30,
+                    g: 30,
+                    b: 46,
+                    a: 255,
+                });
+
+        let lines =
+            highlight::highlight(code, language, &self.syntax_set, theme);
+
+        let canvas_options = canvas::CanvasOptions {
+            bg_color: [bg.r, bg.g, bg.b],
+            opacity: options.opacity as f32,
+            title_bar_style: &options.title_bar_style,
+            language,
+            max_line_length: options.max_line_length,
+            show_line_numbers: options.show_line_numbers,
+        };
 
         if let Some(bg_id) = &options.background_image {
             let (total_w, total_h) =
@@ -130,15 +162,20 @@ impl Renderer {
                 img_h,
             )?;
 
-            rasterize::rasterize_with_background(
-                &svg,
-                Arc::clone(&self.font_db),
+            rasterize::rasterize_direct_with_background(
+                &lines,
+                &self.font_set,
+                &canvas_options,
                 bg_pixmap,
                 options.blur_radius,
                 blur_margin,
             )
         } else {
-            rasterize::rasterize(&svg, Arc::clone(&self.font_db))
+            rasterize::rasterize_direct(
+                &lines,
+                &self.font_set,
+                &canvas_options,
+            )
         }
     }
 

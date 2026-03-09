@@ -316,17 +316,25 @@ fn run_benchmark(label: &str, code: &str, language: Option<&str>) {
         total,
     );
 
-    // 背景あり end-to-end（production コードの実測）
+    // 背景あり end-to-end（3回計測、メディアン）
     let _ = renderer.render_with_options(code, language, theme_name, &options);
-    let t = Instant::now();
-    let _ = renderer.render_with_options(code, language, theme_name, &options).unwrap();
-    let with_bg = t.elapsed().as_micros();
-    println!("  背景あり e2e: {}μs", with_bg);
+    let mut bg_times = Vec::new();
+    for _ in 0..3 {
+        let t = Instant::now();
+        let _ = renderer.render_with_options(code, language, theme_name, &options).unwrap();
+        bg_times.push(t.elapsed().as_micros());
+    }
+    bg_times.sort();
+    println!("  背景あり e2e: {}μs (median of {:?})", bg_times[1], bg_times);
 
-    // 背景なし end-to-end
+    // 背景なし end-to-end（3回計測、メディアン）
     let _ = renderer.render_with_options(code, language, theme_name, &RenderOptions::default());
-    let t = Instant::now();
-    let _ = renderer.render_with_options(code, language, theme_name, &RenderOptions::default()).unwrap();
-    let no_bg = t.elapsed().as_micros();
-    println!("  背景なし e2e: {}μs", no_bg);
+    let mut nobg_times = Vec::new();
+    for _ in 0..3 {
+        let t = Instant::now();
+        let _ = renderer.render_with_options(code, language, theme_name, &RenderOptions::default()).unwrap();
+        nobg_times.push(t.elapsed().as_micros());
+    }
+    nobg_times.sort();
+    println!("  背景なし e2e: {}μs (median of {:?})", nobg_times[1], nobg_times);
 }

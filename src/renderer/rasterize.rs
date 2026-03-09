@@ -5,6 +5,8 @@ use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use resvg::usvg;
 
 use crate::error::BlazeError;
+use crate::renderer::canvas::{self, CanvasOptions, FontSet};
+use crate::renderer::highlight::HighlightedLine;
 
 /// レンダリングスケール（高DPI対応）
 const SCALE: f32 = 2.0;
@@ -249,6 +251,137 @@ pub fn rasterize_with_background(
     encode_png_fast(&final_pixmap)
 }
 
+/// SVG パイプラインを完全に排除した直接描画パス（背景なし）
+/// usvg パース + resvg レンダリングの代わりに fontdue + tiny_skia で直接描画
+pub fn rasterize_direct(
+    lines: &[HighlightedLine],
+    font_set: &FontSet,
+    canvas_options: &CanvasOptions,
+) -> Result<Vec<u8>, BlazeError> {
+    let (svg_w, svg_h) = canvas::calculate_dimensions(
+        lines.len(),
+        canvas_options.title_bar_style,
+    );
+
+    // シャドウ → コード描画の順
+    let shadow = create_shadow_pixmap(svg_w, svg_h)?;
+    let code_pixmap =
+        canvas::render_code_pixmap(lines, font_set, canvas_options, SCALE)?;
+
+    // final_pixmap にシャドウ → コードの順で描画
+    let width = code_pixmap.width();
+    let height = code_pixmap.height();
+    let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| BlazeError::rendering("Pixmap作成に失敗"))?;
+
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        shadow.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::from_scale(
+            SHADOW_DRAW_SCALE,
+            SHADOW_DRAW_SCALE,
+        ),
+        None,
+    );
+
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        code_pixmap.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::identity(),
+        None,
+    );
+
+    encode_png_fast(&final_pixmap)
+}
+
+/// SVG パイプラインを完全に排除した直接描画パス（背景あり）
+pub fn rasterize_direct_with_background(
+    lines: &[HighlightedLine],
+    font_set: &FontSet,
+    canvas_options: &CanvasOptions,
+    bg_pixmap: tiny_skia::Pixmap,
+    blur_radius: f64,
+    blur_margin: u32,
+) -> Result<Vec<u8>, BlazeError> {
+    let (svg_w, svg_h) = canvas::calculate_dimensions(
+        lines.len(),
+        canvas_options.title_bar_style,
+    );
+
+    // 背景ぼかし・シャドウ・コード描画を並列実行
+    let (blur_result, shadow_result, code_pixmap) =
+        std::thread::scope(|s| {
+            let shadow_handle =
+                s.spawn(|| create_shadow_pixmap(svg_w, svg_h));
+            let code_handle = s.spawn(|| {
+                canvas::render_code_pixmap(
+                    lines,
+                    font_set,
+                    canvas_options,
+                    SCALE,
+                )
+            });
+            let blur_result = blur_pixmap(bg_pixmap, blur_radius);
+            let shadow_result =
+                shadow_handle.join().expect("シャドウスレッドがパニック");
+            let code_result =
+                code_handle.join().expect("コード描画スレッドがパニック");
+            (blur_result, shadow_result, code_result)
+        });
+
+    let (blurred_bg, blur_scale) = blur_result?;
+    let shadow = shadow_result?;
+    let code_pixmap = code_pixmap?;
+
+    let width = code_pixmap.width();
+    let height = code_pixmap.height();
+    let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
+
+    // 背景 → シャドウ → コードの順で合成
+    let bg_draw_scale = SCALE * blur_scale;
+    let offset = -(blur_margin as f32) * SCALE;
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        blurred_bg.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::from_scale(bg_draw_scale, bg_draw_scale)
+            .pre_translate(
+                offset / bg_draw_scale,
+                offset / bg_draw_scale,
+            ),
+        None,
+    );
+
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        shadow.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::from_scale(
+            SHADOW_DRAW_SCALE,
+            SHADOW_DRAW_SCALE,
+        ),
+        None,
+    );
+
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        code_pixmap.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::identity(),
+        None,
+    );
+
+    encode_png_fast(&final_pixmap)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +518,73 @@ mod tests {
             .expect("PNGデコードに成功するべき");
         let has_opaque = pixmap.data().chunks(4).any(|px| px[3] > 0);
         assert!(has_opaque, "合成結果は透明でないピクセルを含むべき");
+    }
+
+    // --- 直接描画パスのテスト ---
+
+    use crate::renderer::highlight::{Color, HighlightedLine, StyledToken};
+
+    fn sample_lines() -> Vec<HighlightedLine> {
+        vec![HighlightedLine {
+            tokens: vec![StyledToken {
+                text: "fn main() {}".to_string(),
+                color: Color { r: 205, g: 214, b: 244, a: 255 },
+                bold: false,
+                italic: false,
+            }],
+        }]
+    }
+
+    fn test_font_set() -> FontSet {
+        FontSet::new()
+    }
+
+    fn test_canvas_options() -> CanvasOptions<'static> {
+        CanvasOptions {
+            bg_color: [0x1e, 0x1e, 0x2e],
+            opacity: 0.75,
+            title_bar_style: "macos",
+            language: Some("rust"),
+            max_line_length: None,
+            show_line_numbers: false,
+        }
+    }
+
+    #[test]
+    fn rasterize_direct_produces_png() {
+        let font_set = test_font_set();
+        let lines = sample_lines();
+        let opts = test_canvas_options();
+        let png = rasterize_direct(&lines, &font_set, &opts)
+            .expect("直接描画に成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn rasterize_direct_with_background_produces_png() {
+        let font_set = test_font_set();
+        let lines = sample_lines();
+        let opts = test_canvas_options();
+        let bg =
+            super::super::background::generate_gradient_pixmap(224, 124)
+                .expect("背景Pixmap生成に成功するべき");
+        let png = rasterize_direct_with_background(
+            &lines, &font_set, &opts, bg, 8.0, 12,
+        )
+        .expect("背景付き直接描画に成功するべき");
+        assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn rasterize_direct_not_all_transparent() {
+        let font_set = test_font_set();
+        let lines = sample_lines();
+        let opts = test_canvas_options();
+        let png = rasterize_direct(&lines, &font_set, &opts)
+            .expect("直接描画に成功するべき");
+        let pixmap = tiny_skia::Pixmap::decode_png(&png)
+            .expect("PNGデコードに成功するべき");
+        let has_opaque = pixmap.data().chunks(4).any(|px| px[3] > 0);
+        assert!(has_opaque, "直接描画結果は透明でないピクセルを含むべき");
     }
 }
