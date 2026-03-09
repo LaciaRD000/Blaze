@@ -16,6 +16,7 @@ pub mod background;
 pub mod canvas;
 pub mod highlight;
 pub mod rasterize;
+#[cfg(test)]
 pub mod svg_builder;
 
 /// レンダリング時のユーザー設定オプション
@@ -46,19 +47,16 @@ impl Default for RenderOptions {
     }
 }
 
-/// SVG サイズの定数（svg_builder と同じ値）
-const WINDOW_WIDTH: u32 = 800;
-const SHADOW_MARGIN: u32 = 32;
-const TITLE_BAR_HEIGHT: u32 = 36;
-const PADDING_Y: u32 = 16;
-const LINE_HEIGHT: u32 = 20;
+// レイアウト定数は canvas.rs で一元管理
 
 /// レンダリングパイプラインを統括する構造体
 /// Arc で共有し、複数リクエストで使い回す（読み取り専用、ロック不要）
+/// デフォルトフォント名
+const DEFAULT_FONT: &str = "Fira Code";
+
 pub struct Renderer {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
-    pub font_set: canvas::FontSet,
     /// フォントファミリー名 → FontSet のマップ（各フォント個別のグリフキャッシュを保持）
     font_sets: HashMap<String, canvas::FontSet>,
     pub shadow_cache: rasterize::ShadowCache,
@@ -81,8 +79,6 @@ impl Renderer {
         let theme_set: ThemeSet =
             syntect::dumps::from_uncompressed_data(THEME_SET_DUMP)
                 .expect("ThemeSet のデシリアライズに失敗");
-        let font_set = canvas::FontSet::new();
-
         // 全フォントファミリー分の FontSet をプリロード
         let mut font_sets = HashMap::new();
         font_sets.insert(
@@ -104,7 +100,6 @@ impl Renderer {
         Self {
             syntax_set,
             theme_set,
-            font_set,
             font_sets,
             shadow_cache,
             background_cache,
@@ -204,24 +199,42 @@ impl Renderer {
         }
     }
 
-    /// SVG文字列のみを返す（スナップショットテスト用、デフォルトオプション）
-    pub fn render_svg(
+    /// デフォルトの FontSet (Fira Code) への参照を返す
+    pub fn default_font_set(&self) -> &canvas::FontSet {
+        self.font_sets.get(DEFAULT_FONT).expect("デフォルトフォントが登録されているべき")
+    }
+
+    /// font_family 名から FontSet を解決する。不明な名前はデフォルト (Fira Code) にフォールバック
+    fn resolve_font_set(&self, font_family: Option<&str>) -> &canvas::FontSet {
+        let name = font_family.unwrap_or(DEFAULT_FONT);
+        self.font_sets
+            .get(name)
+            .unwrap_or_else(|| self.font_sets.get(DEFAULT_FONT).expect("デフォルトフォントが登録されているべき"))
+    }
+
+    /// 画像のピクセルサイズを推定する（canvas::calculate_dimensions と同等）
+    fn estimate_svg_size(code: &str, options: &RenderOptions) -> (u32, u32) {
+        let (w, h) = canvas::calculate_dimensions(
+            code.lines().count(),
+            &options.title_bar_style,
+        );
+        (w as u32, h as u32)
+    }
+}
+
+/// テスト専用: SVG 生成メソッド（スナップショットテスト・オプション検証用）
+#[cfg(test)]
+impl Renderer {
+    fn render_svg(
         &self,
         code: &str,
         language: Option<&str>,
         theme_name: &str,
     ) -> Result<String, BlazeError> {
-        self.build_svg_internal(
-            code,
-            language,
-            theme_name,
-            &RenderOptions::default(),
-        )
+        self.build_svg_internal(code, language, theme_name, &RenderOptions::default())
     }
 
-    /// SVG文字列のみを返す（オプション指定）
-    /// 注意: 背景画像は SVG に含まれない（rasterize 側で合成される）
-    pub fn render_svg_with_options(
+    fn render_svg_with_options(
         &self,
         code: &str,
         language: Option<&str>,
@@ -231,28 +244,6 @@ impl Renderer {
         self.build_svg_internal(code, language, theme_name, options)
     }
 
-    /// font_family 名から FontSet を解決する。不明な名前はデフォルト (Fira Code) にフォールバック
-    fn resolve_font_set(&self, font_family: Option<&str>) -> &canvas::FontSet {
-        match font_family {
-            Some(name) => self.font_sets.get(name).unwrap_or(&self.font_set),
-            None => &self.font_set,
-        }
-    }
-
-    /// SVG のピクセルサイズを推定する（svg_builder と同じ計算）
-    fn estimate_svg_size(code: &str, options: &RenderOptions) -> (u32, u32) {
-        let line_count = code.lines().count().max(1) as u32;
-        let title_bar_h = match options.title_bar_style.as_str() {
-            "macos" | "linux" | "plain" => TITLE_BAR_HEIGHT,
-            _ => 0,
-        };
-        let window_h = title_bar_h + PADDING_Y * 2 + LINE_HEIGHT * line_count;
-        let total_w = WINDOW_WIDTH + SHADOW_MARGIN * 2;
-        let total_h = window_h + SHADOW_MARGIN * 2;
-        (total_w, total_h)
-    }
-
-    /// ハイライト → SVG生成の共通処理（背景画像は含めない）
     fn build_svg_internal(
         &self,
         code: &str,
@@ -269,16 +260,15 @@ impl Renderer {
                 BlazeError::rendering("デフォルトテーマが見つかりません")
             })?;
 
-        let bg =
-            theme
-                .settings
-                .background
-                .unwrap_or(syntect::highlighting::Color {
-                    r: 30,
-                    g: 30,
-                    b: 46,
-                    a: 255,
-                });
+        let bg = theme
+            .settings
+            .background
+            .unwrap_or(syntect::highlighting::Color {
+                r: 30,
+                g: 30,
+                b: 46,
+                a: 255,
+            });
         let bg_color = format!("#{:02x}{:02x}{:02x}", bg.r, bg.g, bg.b);
 
         let lines =

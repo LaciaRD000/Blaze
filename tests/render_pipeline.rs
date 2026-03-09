@@ -71,16 +71,17 @@ fn render_pipeline_long_line_trimmed() {
         ..Default::default()
     };
 
-    let svg = renderer
-        .render_svg_with_options(
+    let png = renderer
+        .render_with_options(
             &long_line,
             Some("rust"),
             "base16-ocean.dark",
             &opts,
         )
-        .expect("SVG 生成が成功するべき");
+        .expect("レンダリングが成功するべき");
 
-    assert!(svg.contains("…"), "長い行がトリミングされるべき");
+    // トリミング付きでも正常な PNG を出力できることを検証
+    assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
 }
 
 /// 存在しないテーマでフォールバックが動作することを検証

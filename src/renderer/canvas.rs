@@ -7,16 +7,16 @@ use std::sync::RwLock;
 use crate::error::BlazeError;
 use crate::renderer::highlight::{HighlightedLine, StyledToken};
 
-/// レイアウト定数（svg_builder.rs と同じ値）
-const FONT_SIZE: f32 = 14.0;
-const LINE_HEIGHT: f32 = 20.0;
-const PADDING_X: f32 = 16.0;
-const PADDING_Y: f32 = 16.0;
-const TITLE_BAR_HEIGHT: f32 = 36.0;
-const SHADOW_MARGIN: f32 = 32.0;
-const BORDER_RADIUS: f32 = 12.0;
-const WINDOW_WIDTH: f32 = 800.0;
-const LINE_NUMBER_WIDTH: f32 = 40.0;
+/// レイアウト定数（レンダリングパイプライン共通）
+pub(super) const FONT_SIZE: f32 = 14.0;
+pub(super) const LINE_HEIGHT: f32 = 20.0;
+pub(super) const PADDING_X: f32 = 16.0;
+pub(super) const PADDING_Y: f32 = 16.0;
+pub(super) const TITLE_BAR_HEIGHT: f32 = 36.0;
+pub(super) const SHADOW_MARGIN: f32 = 32.0;
+pub(super) const BORDER_RADIUS: f32 = 12.0;
+pub(super) const WINDOW_WIDTH: f32 = 800.0;
+pub(super) const LINE_NUMBER_WIDTH: f32 = 40.0;
 
 /// グリフキャッシュの型エイリアス: (char, f32ビット表現) → (Metrics, bitmap)
 type GlyphCache = RwLock<HashMap<(char, u32), (fontdue::Metrics, Vec<u8>)>>;

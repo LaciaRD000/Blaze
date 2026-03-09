@@ -29,8 +29,8 @@ use crate::renderer::highlight::HighlightedLine;
 /// レンダリングスケール（高DPI対応）
 const SCALE: f32 = 2.0;
 
-/// ドロップシャドウ定数
-const SHADOW_MARGIN: f32 = 32.0;
+/// ドロップシャドウ定数（SHADOW_MARGIN は canvas.rs で定義）
+use super::canvas::SHADOW_MARGIN;
 const SHADOW_DY: f32 = 8.0;
 const SHADOW_SIGMA: f32 = 16.0;
 const SHADOW_OPACITY: u8 = 102; // floor(0.4 * 255)

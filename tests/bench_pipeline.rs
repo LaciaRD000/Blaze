@@ -117,7 +117,7 @@ fn run_benchmark(label: &str, code: &str, language: Option<&str>) {
     let height = (total_h * 2.0) as u32;
     let mut code_pixmap = tiny_skia::Pixmap::new(width, height).unwrap();
     canvas::render_code_onto_pixmap(
-        &mut code_pixmap, &highlighted, &renderer.font_set, &canvas_options, 2.0,
+        &mut code_pixmap, &highlighted, renderer.default_font_set(), &canvas_options, 2.0,
     );
     let t2 = t.elapsed().as_micros();
 
