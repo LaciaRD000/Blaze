@@ -1,9 +1,28 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use image::ImageEncoder;
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use resvg::usvg;
+
+/// Pixmap を最速設定で PNG エンコードする（png crate 直接利用）
+/// NoFilter + Fast 圧縮で image crate 版より高速
+/// Discord は画像アップロード時に再圧縮するため、Bot 側の高圧縮は不要
+fn encode_png_fastest(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError> {
+    let data = pixmap.data();
+    let mut buf = Vec::with_capacity(data.len() + 1024);
+    let mut encoder = png::Encoder::new(&mut buf, pixmap.width(), pixmap.height());
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::FilterType::NoFilter);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| BlazeError::rendering(format!("PNGヘッダ書き込み失敗: {e}")))?;
+    writer
+        .write_image_data(data)
+        .map_err(|e| BlazeError::rendering(format!("PNGデータ書き込み失敗: {e}")))?;
+    drop(writer);
+    Ok(buf)
+}
 
 use crate::error::BlazeError;
 use crate::renderer::canvas::{self, CanvasOptions, FontSet};
@@ -11,28 +30,6 @@ use crate::renderer::highlight::HighlightedLine;
 
 /// レンダリングスケール（高DPI対応）
 const SCALE: f32 = 2.0;
-
-/// Pixmap を高速圧縮で PNG エンコードする
-/// Discord は画像アップロード時に再圧縮するため、Bot 側で高圧縮する CPU コストは無駄になる
-fn encode_png_fast(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError> {
-    let mut buf = Vec::new();
-    let encoder = PngEncoder::new_with_quality(
-        &mut buf,
-        CompressionType::Fast,
-        FilterType::Sub,
-    );
-    encoder
-        .write_image(
-            pixmap.data(),
-            pixmap.width(),
-            pixmap.height(),
-            image::ExtendedColorType::Rgba8,
-        )
-        .map_err(|e| {
-            BlazeError::rendering(format!("PNGエンコード失敗: {e}"))
-        })?;
-    Ok(buf)
-}
 
 /// ドロップシャドウ定数
 const SHADOW_MARGIN: f32 = 32.0;
@@ -173,7 +170,7 @@ pub fn rasterize(
         &mut final_pixmap.as_mut(),
     );
 
-    encode_png_fast(&final_pixmap)
+    encode_png_fastest(&final_pixmap)
 }
 
 /// tiny_skia::Pixmap (premultiplied alpha) → image::RgbaImage (straight alpha) に変換
@@ -295,7 +292,7 @@ pub fn rasterize_with_background(
         &mut final_pixmap.as_mut(),
     );
 
-    encode_png_fast(&final_pixmap)
+    encode_png_fastest(&final_pixmap)
 }
 
 /// SVG パイプラインを完全に排除した直接描画パス（背景なし）
@@ -343,7 +340,7 @@ pub fn rasterize_direct(
         None,
     );
 
-    encode_png_fast(&final_pixmap)
+    encode_png_fastest(&final_pixmap)
 }
 
 /// SVG パイプラインを完全に排除した直接描画パス（背景あり）
@@ -423,7 +420,7 @@ pub fn rasterize_direct_with_background(
         None,
     );
 
-    encode_png_fast(&final_pixmap)
+    encode_png_fastest(&final_pixmap)
 }
 
 #[cfg(test)]
@@ -443,12 +440,24 @@ mod tests {
     }
 
     #[test]
-    fn encode_png_fast_produces_valid_png() {
+    fn encode_png_fastest_produces_valid_png() {
         let pixmap = tiny_skia::Pixmap::new(100, 50)
             .expect("Pixmap作成に成功するべき");
-        let png = encode_png_fast(&pixmap)
+        let png = encode_png_fastest(&pixmap)
             .expect("PNGエンコードに成功するべき");
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
+    }
+
+    #[test]
+    fn encode_png_fastest_roundtrip_preserves_dimensions() {
+        let pixmap = tiny_skia::Pixmap::new(200, 100)
+            .expect("Pixmap作成に成功するべき");
+        let png = encode_png_fastest(&pixmap)
+            .expect("PNGエンコードに成功するべき");
+        let decoded = tiny_skia::Pixmap::decode_png(&png)
+            .expect("PNGデコードに成功するべき");
+        assert_eq!(decoded.width(), 200);
+        assert_eq!(decoded.height(), 100);
     }
 
     #[test]
