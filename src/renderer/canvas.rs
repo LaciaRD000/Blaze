@@ -202,7 +202,8 @@ pub fn render_code_pixmap(
                     &bitmap,
                     &metrics,
                     x as i32 + metrics.xmin,
-                    text_y as i32 - metrics.ymin,
+                    text_y as i32 - metrics.ymin
+                        - metrics.height as i32,
                     color,
                 );
                 x += metrics.advance_width;
@@ -391,8 +392,7 @@ fn draw_text(
             &bitmap,
             &metrics,
             cursor_x as i32 + metrics.xmin,
-            y as i32 - metrics.ymin - metrics.height as i32
-                + metrics.height as i32,
+            y as i32 - metrics.ymin - metrics.height as i32,
             color,
         );
         cursor_x += metrics.advance_width;
