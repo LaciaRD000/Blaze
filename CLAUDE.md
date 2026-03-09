@@ -19,11 +19,11 @@ cargo fmt                      # Format (nightly toolchain required for rustfmt.
 
 ## Architecture
 
-**Rendering pipeline**: Discord message → extract code block (regex) → tokenize with `syntect` → build SVG string (`format!`/`write!`) → rasterize to PNG via `resvg`/`tiny-skia` → reply with image attachment.
+**Rendering pipeline**: Discord message → extract code block (regex) → tokenize with `syntect` → rasterize to PNG via `fontdue`/`tiny-skia` direct drawing → reply with image attachment.
 
-Key crates: `poise` (Discord framework), `syntect` (syntax highlighting), `resvg`/`tiny-skia` (SVG→PNG), `sqlx` (Supabase PostgreSQL for user theme persistence).
+Key crates: `poise` (Discord framework), `syntect` (syntax highlighting), `fontdue` (glyph rasterization), `tiny-skia` (2D drawing/compositing), `sqlx` (Supabase PostgreSQL for user theme persistence).
 
-The `Renderer` struct (holding `SyntaxSet`, `ThemeSet`, `fontdb::Database`) is wrapped in `Arc` and shared across all requests — read-only, no locks needed. CPU-bound rasterization runs in `tokio::task::spawn_blocking`.
+The `Renderer` struct (holding `SyntaxSet`, `ThemeSet`, `FontSet`, `ShadowCache`) is wrapped in `Arc` and shared across all requests — read-only, no locks needed. CPU-bound rasterization runs in `tokio::task::spawn_blocking`.
 
 ## Coding Conventions (from CODING_GUIDELINES.md)
 

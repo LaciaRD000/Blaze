@@ -9,7 +9,7 @@ Discord 上のコードブロックを、SwayFX/Wezterm 風のターミナルウ
 
 ## 特徴
 
-- **ネイティブレンダリング** — syntect でハイライト → SVG 生成 → resvg/tiny-skia で PNG 変換
+- **ネイティブレンダリング** — syntect でハイライト → fontdue/tiny-skia で直接 PNG 描画
 - **高解像度出力** — 2x スケールで Discord の高 DPI 表示にも対応
 - **テーマカスタマイズ** — カラースキーム、背景、フォント、タイトルバーなどを `/theme set` で設定
 - **日本語対応** — PlemolJP / HackGen NF フォントをバンドル
@@ -133,8 +133,7 @@ Discord メッセージ
   → コードブロック抽出（正規表現）
   → 入力バリデーション & サニタイズ
   → syntect でトークン化 & 色付け
-  → SVG 文字列生成（タイトルバー、背景、コードテキスト）
-  → resvg/tiny-skia で PNG ラスタライズ（2x スケール）
+  → fontdue/tiny-skia で直接 Pixmap に描画（2x スケール）
   → Discord にリプライ送信
 ```
 
@@ -161,7 +160,7 @@ Discord メッセージ
 | 言語 | Rust (Edition 2024) |
 | Discord | poise / serenity |
 | 構文解析 | syntect (ビルド時 packdump) |
-| 画像生成 | resvg / tiny-skia / image |
+| 画像生成 | fontdue / tiny-skia / image |
 | DB | PostgreSQL / Supabase (sqlx) |
 | メッセージキュー | Redis |
 | エラー処理 | thiserror |
