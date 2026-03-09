@@ -53,7 +53,7 @@ fn main() {
 | ウィンドウ枠 | 角丸（border-radius: 12px）、ドロップシャドウ付き |
 | タイトルバー | macOS風（赤・黄・緑の3つのボタン）またはLinux風。言語名を表示 |
 | コード本体 | シンタックスハイライト済みのテキスト。プログラミング用フォントで描画 |
-| フォント | Fira Code（英字）、PlemolJP（日本語フォールバック） |
+| フォント | ユーザー選択可能（Fira Code / PlemolJP / HackGen NF）。未設定時は Fira Code（英字）+ PlemolJP（日本語フォールバック） |
 
 #### 3.1.5 シンタックスハイライト
 
@@ -77,8 +77,8 @@ Rust, Python, Go, JavaScript, TypeScript (ts/tsx), JSX, C, C++, C#, Java, Kotlin
 | `background` | ドロップダウン選択（任意） | 背景画像（none / gradient / denim / repeated-square-dark） | `gradient` |
 | `blur` | 小数（任意） | ガウスぼかしの強度 | `8.0` |
 | `opacity` | 小数（任意） | ウィンドウの不透明度 | `0.75` |
-| `title_bar` | ドロップダウン選択（任意） | タイトルバースタイル（macOS / Linux） | `macos` |
-| `font` | ドロップダウン選択（任意） | フォント名（Fira Code / PlemolJP） | `Fira Code` |
+| `title_bar` | ドロップダウン選択（任意） | タイトルバースタイル（macOS / Linux / plain / none） | `macos` |
+| `font` | ドロップダウン選択（任意） | フォント名（Fira Code / PlemolJP / HackGen NF） | `Fira Code` |
 | `show_line_numbers` | 真偽値（任意） | 行番号を表示するか | `false` |
 
 - すべてのパラメータは任意。指定したものだけが更新される

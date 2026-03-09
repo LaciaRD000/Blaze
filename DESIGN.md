@@ -77,7 +77,7 @@ blaze-bot/
   → 直接描画 (renderer/canvas.rs)
       - FontSet (fontdue) でグリフをラスタライズし、tiny_skia::Pixmap に直接描画
       - 角丸矩形、タイトルバー（macOS/Linux/plain/none）、コード行をすべて tiny_skia PathBuilder で構築
-      - フォントフォールバック: Fira Code (primary) → PlemolJP (fallback)
+      - フォントフォールバック: ユーザー設定のプライマリフォント → フォールバック（Fira Code→PlemolJP, PlemolJP→Fira Code, HackGen NF→PlemolJP）
       - ※ SVG (usvg/resvg) パイプラインを完全に排除
   → PNG ラスタライズ + 背景合成 (renderer/rasterize.rs)
       - ドロップシャドウ: ShadowCache からサイズ別にキャッシュ取得（ヒット時は即座に返却）
@@ -150,6 +150,8 @@ pub struct RenderJobOptions {
     pub show_line_numbers: bool,
     pub max_line_length: Option<usize>,
     pub background_image: Option<String>,
+    #[serde(default)]
+    pub font_family: Option<String>,  // None でデフォルト (Fira Code)
 }
 
 /// Worker → Gateway: レンダリング結果
@@ -355,7 +357,8 @@ pub struct Renderer {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
     pub font_db: Arc<usvg::fontdb::Database>,  // SVGスナップショットテスト用に保持
-    pub font_set: canvas::FontSet,              // fontdue フォントセット（直接描画用）
+    pub font_set: canvas::FontSet,              // デフォルトの fontdue フォントセット（Fira Code）
+    font_sets: HashMap<String, canvas::FontSet>, // フォントファミリー名 → FontSet（各フォント個別のグリフキャッシュを保持）
     pub shadow_cache: rasterize::ShadowCache,   // シャドウ Pixmap サイズ別キャッシュ
     pub background_cache: BackgroundCache,      // WebP デコード済みタイルをキャッシュ
 }
@@ -372,24 +375,33 @@ impl Renderer {
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
         let font_set = canvas::FontSet::new();
-        let shadow_cache = rasterize::ShadowCache::new(); // シャドウ Pixmap キャッシュ
-        let background_cache = BackgroundCache::new(); // 起動時に1回だけ WebP デコード
+        // 全フォントファミリー分の FontSet をプリロード
+        let mut font_sets = HashMap::new();
+        font_sets.insert("Fira Code".into(), canvas::FontSet::with_family(canvas::FontFamily::FiraCode));
+        font_sets.insert("PlemolJP".into(), canvas::FontSet::with_family(canvas::FontFamily::PlemolJP));
+        font_sets.insert("HackGen Console NF".into(), canvas::FontSet::with_family(canvas::FontFamily::HackGenNF));
+        let shadow_cache = rasterize::ShadowCache::new();
+        let background_cache = BackgroundCache::new();
 
-        Self { syntax_set, theme_set, font_db: Arc::new(font_db), font_set, shadow_cache, background_cache }
+        Self { syntax_set, theme_set, font_db: Arc::new(font_db), font_set, font_sets, shadow_cache, background_cache }
     }
 
     /// 直接描画パイプライン: highlight → canvas.rs (fontdue + tiny_skia) → PNG
     /// SVG パイプライン (usvg/resvg) を完全に排除
     pub fn render_with_options(&self, code, language, theme_name, options) -> Result<Vec<u8>> {
         let lines = highlight::highlight(code, language, &self.syntax_set, theme);
+        let font_set = self.resolve_font_set(options.font_family.as_deref());
         let canvas_options = canvas::CanvasOptions { /* テーマ設定から構築 */ };
         if let Some(bg_id) = &options.background_image {
             let bg_pixmap = background::load_background_pixmap(&self.background_cache, bg_id, w, h)?;
-            rasterize::rasterize_direct_with_background(&lines, &self.font_set, &canvas_options, &self.shadow_cache, bg_pixmap, blur, margin)
+            rasterize::rasterize_direct_with_background(&lines, font_set, &canvas_options, &self.shadow_cache, bg_pixmap, blur, margin)
         } else {
-            rasterize::rasterize_direct(&lines, &self.font_set, &canvas_options, &self.shadow_cache)
+            rasterize::rasterize_direct(&lines, font_set, &canvas_options, &self.shadow_cache)
         }
     }
+
+    /// font_family 名から FontSet を解決する。不明な名前はデフォルト (Fira Code) にフォールバック
+    fn resolve_font_set(&self, font_family: Option<&str>) -> &canvas::FontSet;
 }
 
 /// BackgroundCache: WebP 背景画像を起動時にデコードしてキャッシュ
@@ -402,14 +414,15 @@ pub struct BackgroundCache {
 /// ShadowCache: シャドウ Pixmap を (svg_width, svg_height) でキャッシュ
 /// シャドウはコード内容やテーマに依存せず、サイズのみで決まるため高いヒット率を実現
 /// 幅は常に 864px、高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50
+/// RwLock で読み取りは共有ロック、Arc で Pixmap clone を pointer clone に置換
 pub struct ShadowCache {
-    cache: Mutex<HashMap<(u32, u32), tiny_skia::Pixmap>>,
+    cache: RwLock<HashMap<(u32, u32), Arc<tiny_skia::Pixmap>>>,
 }
 
 impl ShadowCache {
     pub fn new() -> Self;
-    /// キャッシュヒット時はクローンを返し、ミス時は生成してキャッシュに格納
-    pub fn get_or_create(&self, svg_width: f32, svg_height: f32) -> Result<tiny_skia::Pixmap, BlazeError>;
+    /// キャッシュヒット時は Arc clone（pointer clone）を返し、ミス時は生成してキャッシュに格納
+    pub fn get_or_create(&self, svg_width: f32, svg_height: f32) -> Result<Arc<tiny_skia::Pixmap>, BlazeError>;
 }
 
 fn load_fonts(font_db: &mut usvg::fontdb::Database) {
@@ -422,21 +435,32 @@ fn load_fonts(font_db: &mut usvg::fontdb::Database) {
 ### 直接描画モジュール (src/renderer/canvas.rs)
 
 ```rust
+/// ユーザーが選択可能なフォントファミリー
+pub enum FontFamily { FiraCode, PlemolJP, HackGenNF }
+
 /// フォントセット（fontdue によるグリフラスタライズ）
-/// Fira Code (primary) + PlemolJP (fallback) の2フォント構成
+/// FontFamily に応じてプライマリフォントを切り替え、もう一方をフォールバックとする
+/// 各 FontSet は個別の RwLock グリフキャッシュを保持し、フォント間でキャッシュが汚染されない
 pub struct FontSet {
-    primary: fontdue::Font,   // Fira Code（英字・記号）
-    fallback: fontdue::Font,  // PlemolJP（日本語フォールバック）
+    primary: fontdue::Font,   // ユーザー選択のプライマリフォント
+    fallback: fontdue::Font,  // フォールバックフォント
+    glyph_cache: RwLock<HashMap<(char, u32), (fontdue::Metrics, Vec<u8>)>>,
 }
 
 impl FontSet {
-    pub fn new() -> Self {
-        // include_bytes! で埋め込んだ TTF からフォントを読み込み
-    }
+    /// デフォルト (Fira Code) で構築
+    pub fn new() -> Self { Self::with_family(FontFamily::FiraCode) }
+
+    /// 指定フォントファミリーをプライマリとした FontSet を構築
+    /// FiraCode → fallback: PlemolJP, PlemolJP → fallback: FiraCode, HackGenNF → fallback: PlemolJP
+    pub fn with_family(family: FontFamily) -> Self;
 
     /// 文字に対応するフォントを選択してラスタライズ
-    /// Fira Code の lookup_glyph_index が 0 なら PlemolJP にフォールバック
+    /// primary の lookup_glyph_index が 0 なら fallback にフォールバック
     fn rasterize_char(&self, ch: char, px: f32) -> (fontdue::Metrics, Vec<u8>);
+
+    /// キャッシュ付きラスタライズ: 同一 (char, px) は再利用する
+    pub fn rasterize_cached(&self, ch: char, px: f32) -> (fontdue::Metrics, Vec<u8>);
 }
 
 /// キャンバス描画オプション
@@ -807,7 +831,7 @@ insta = "1"            # スナップショットテスト
 - **Gateway/Worker 分離**: Discord I/O（Gateway）と CPUバウンドなレンダリング（Worker）を別プロセスに分離するマイクロサービス構成をサポートする。Redis リストベースのキューで通信し、Worker の水平スケーリングが可能。モノリスモードも後方互換として維持する
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGパイプライン排除（Phase 12）**: メインのレンダリングパスから usvg/resvg を完全に排除。fontdue でグリフを個別にラスタライズし、tiny_skia の PathBuilder で描画プリミティブ（角丸矩形、円、線）を構築して直接 Pixmap に描画する。usvg の SVG パース（~50ms）を完全に排除し、38%の高速化を実現
-- **canvas.rs 直接描画モジュール**: `FontSet` が Fira Code (primary) と PlemolJP (fallback) の fontdue::Font と `RwLock<HashMap>` ベースのグリフキャッシュを保持。`render_code_onto_pixmap()` がハイライト済みコード行を受け取り、既存の Pixmap に直接描画する（Pixmap 二重確保を回避）。各文字は `lookup_glyph_index` でフォントを選択し、`rasterize_cached()` でキャッシュ付きラスタライズを行い、事前クリッピング計算で per-pixel bounds check を排除した `draw_glyph` で α ブレンド
+- **canvas.rs 直接描画モジュール**: `FontSet` が `FontFamily` enum に応じたプライマリ＋フォールバックの fontdue::Font と `RwLock<HashMap>` ベースのグリフキャッシュを保持。`Renderer` は全3フォント（Fira Code / PlemolJP / HackGen Console NF）の `FontSet` を `HashMap` でプリロードし、`RenderOptions.font_family` に応じて選択する。`render_code_onto_pixmap()` がハイライト済みコード行を受け取り、既存の Pixmap に直接描画する（Pixmap 二重確保を回避）。各文字は `lookup_glyph_index` でフォントを選択し、`rasterize_cached()` でキャッシュ付きラスタライズを行い、事前クリッピング計算で per-pixel bounds check を排除した `draw_glyph` で α ブレンド
 - **svg_builder.rs はスナップショットテスト専用**: SVG 文字列生成はメインパスでは使用されない。`insta` によるスナップショットテストでレンダリング出力の視覚的回帰を検知するためにのみ保持
 - **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
 - **ドロップシャドウの直接描画**: SVG の `feDropShadow` フィルタを除去し、tiny_skia で矩形を描画 → `image::imageops::blur` でぼかし → 2xスケールで合成。resvg 内部のフィルタ処理（パイプライン全体の30〜50%を占めていた）を回避
@@ -824,7 +848,7 @@ insta = "1"            # スナップショットテスト
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する
 - **Discord API 429 リトライ**: serenity/poise はDiscord APIからの `429 Too Many Requests` レスポンスに対して、`Retry-After` ヘッダに基づく自動リトライを内蔵している。独自のリトライロジックは実装しない。ただし、Bot側のレート制限（`governor`）でリクエスト頻度を事前に抑制し、429を極力発生させない設計とする
 - **レンダリング同時実行数制御**: `tokio::sync::Semaphore` で `spawn_blocking` の同時実行数を `Settings.max_concurrent_renders`（デフォルト: 4）に制限し、CPU飽和を防止する
-- **fontdue によるフォントフォールバック**: `FontSet::rasterize_char()` は `primary.lookup_glyph_index(ch)` でグリフの存在を確認し、0（未定義）なら `fallback`（PlemolJP）にフォールバックする。usvg/resvg の fontdb によるフォント解決を経由しないため、フォント選択のオーバーヘッドが極小
+- **fontdue によるフォントフォールバック**: `FontSet::rasterize_char()` は `primary.lookup_glyph_index(ch)` でグリフの存在を確認し、0（未定義）なら `fallback` にフォールバックする。usvg/resvg の fontdb によるフォント解決を経由しないため、フォント選択のオーバーヘッドが極小。`FontFamily` enum により Fira Code / PlemolJP / HackGen Console NF の切替が可能で、各 FontSet は独立したグリフキャッシュを保持する
 
 ---
 
