@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use image::ImageEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
@@ -88,6 +89,52 @@ fn create_shadow_pixmap(
 
 /// シャドウの描画スケール（1/4 ダウンスケール × 2x レンダリングスケール = 8x）
 const SHADOW_DRAW_SCALE: f32 = SCALE * 4.0;
+
+/// シャドウ Pixmap のサイズ別キャッシュ
+/// シャドウは (svg_width, svg_height) にのみ依存し、幅は常に 864px、
+/// 高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50
+pub struct ShadowCache {
+    cache: Mutex<HashMap<(u32, u32), tiny_skia::Pixmap>>,
+}
+
+impl Default for ShadowCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ShadowCache {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// キャッシュからシャドウを取得、なければ生成してキャッシュする
+    pub fn get_or_create(
+        &self,
+        svg_width: f32,
+        svg_height: f32,
+    ) -> Result<tiny_skia::Pixmap, BlazeError> {
+        let key = (svg_width as u32, svg_height as u32);
+
+        // 読み取りチェック
+        {
+            let cache = self.cache.lock().expect("ShadowCache lock");
+            if let Some(cached) = cache.get(&key) {
+                return Ok(cached.clone());
+            }
+        }
+
+        // キャッシュミス: 生成してから格納
+        let shadow = create_shadow_pixmap(svg_width, svg_height)?;
+        {
+            let mut cache = self.cache.lock().expect("ShadowCache lock");
+            cache.insert(key, shadow.clone());
+        }
+        Ok(shadow)
+    }
+}
 
 /// SVG文字列をPNGバイト列に変換する（背景なし）
 pub fn rasterize(
@@ -257,14 +304,15 @@ pub fn rasterize_direct(
     lines: &[HighlightedLine],
     font_set: &FontSet,
     canvas_options: &CanvasOptions,
+    shadow_cache: &ShadowCache,
 ) -> Result<Vec<u8>, BlazeError> {
     let (svg_w, svg_h) = canvas::calculate_dimensions(
         lines.len(),
         canvas_options.title_bar_style,
     );
 
-    // シャドウ → コード描画の順
-    let shadow = create_shadow_pixmap(svg_w, svg_h)?;
+    // シャドウ（キャッシュ済み）→ コード描画の順
+    let shadow = shadow_cache.get_or_create(svg_w, svg_h)?;
     let code_pixmap =
         canvas::render_code_pixmap(lines, font_set, canvas_options, SCALE)?;
 
@@ -303,6 +351,7 @@ pub fn rasterize_direct_with_background(
     lines: &[HighlightedLine],
     font_set: &FontSet,
     canvas_options: &CanvasOptions,
+    shadow_cache: &ShadowCache,
     bg_pixmap: tiny_skia::Pixmap,
     blur_radius: f64,
     blur_margin: u32,
@@ -312,29 +361,24 @@ pub fn rasterize_direct_with_background(
         canvas_options.title_bar_style,
     );
 
-    // 背景ぼかし・シャドウ・コード描画を並列実行
-    let (blur_result, shadow_result, code_pixmap) =
-        std::thread::scope(|s| {
-            let shadow_handle =
-                s.spawn(|| create_shadow_pixmap(svg_w, svg_h));
-            let code_handle = s.spawn(|| {
-                canvas::render_code_pixmap(
-                    lines,
-                    font_set,
-                    canvas_options,
-                    SCALE,
-                )
-            });
-            let blur_result = blur_pixmap(bg_pixmap, blur_radius);
-            let shadow_result =
-                shadow_handle.join().expect("シャドウスレッドがパニック");
-            let code_result =
-                code_handle.join().expect("コード描画スレッドがパニック");
-            (blur_result, shadow_result, code_result)
+    // シャドウはキャッシュから取得（高速）、背景ぼかし+コード描画は並列実行
+    let shadow = shadow_cache.get_or_create(svg_w, svg_h)?;
+    let (blur_result, code_pixmap) = std::thread::scope(|s| {
+        let code_handle = s.spawn(|| {
+            canvas::render_code_pixmap(
+                lines,
+                font_set,
+                canvas_options,
+                SCALE,
+            )
         });
+        let blur_result = blur_pixmap(bg_pixmap, blur_radius);
+        let code_result =
+            code_handle.join().expect("コード描画スレッドがパニック");
+        (blur_result, code_result)
+    });
 
     let (blurred_bg, blur_scale) = blur_result?;
-    let shadow = shadow_result?;
     let code_pixmap = code_pixmap?;
 
     let width = code_pixmap.width();
@@ -555,7 +599,8 @@ mod tests {
         let font_set = test_font_set();
         let lines = sample_lines();
         let opts = test_canvas_options();
-        let png = rasterize_direct(&lines, &font_set, &opts)
+        let cache = ShadowCache::new();
+        let png = rasterize_direct(&lines, &font_set, &opts, &cache)
             .expect("直接描画に成功するべき");
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
     }
@@ -565,11 +610,12 @@ mod tests {
         let font_set = test_font_set();
         let lines = sample_lines();
         let opts = test_canvas_options();
+        let cache = ShadowCache::new();
         let bg =
             super::super::background::generate_gradient_pixmap(224, 124)
                 .expect("背景Pixmap生成に成功するべき");
         let png = rasterize_direct_with_background(
-            &lines, &font_set, &opts, bg, 8.0, 12,
+            &lines, &font_set, &opts, &cache, bg, 8.0, 12,
         )
         .expect("背景付き直接描画に成功するべき");
         assert_eq!(&png[..4], &[0x89, 0x50, 0x4E, 0x47]);
@@ -580,11 +626,42 @@ mod tests {
         let font_set = test_font_set();
         let lines = sample_lines();
         let opts = test_canvas_options();
-        let png = rasterize_direct(&lines, &font_set, &opts)
+        let cache = ShadowCache::new();
+        let png = rasterize_direct(&lines, &font_set, &opts, &cache)
             .expect("直接描画に成功するべき");
         let pixmap = tiny_skia::Pixmap::decode_png(&png)
             .expect("PNGデコードに成功するべき");
         let has_opaque = pixmap.data().chunks(4).any(|px| px[3] > 0);
         assert!(has_opaque, "直接描画結果は透明でないピクセルを含むべき");
+    }
+
+    #[test]
+    fn shadow_cache_returns_same_result() {
+        let cache = ShadowCache::new();
+        let s1 = cache
+            .get_or_create(864.0, 192.0)
+            .expect("シャドウ生成に成功するべき");
+        let s2 = cache
+            .get_or_create(864.0, 192.0)
+            .expect("キャッシュ取得に成功するべき");
+        assert_eq!(s1.width(), s2.width());
+        assert_eq!(s1.height(), s2.height());
+        assert_eq!(s1.data(), s2.data(), "キャッシュされたシャドウは同一であるべき");
+    }
+
+    #[test]
+    fn shadow_cache_different_sizes_are_independent() {
+        let cache = ShadowCache::new();
+        let s1 = cache
+            .get_or_create(864.0, 192.0)
+            .expect("シャドウ生成に成功するべき");
+        let s2 = cache
+            .get_or_create(864.0, 292.0)
+            .expect("別サイズのシャドウ生成に成功するべき");
+        assert_ne!(
+            s1.height(),
+            s2.height(),
+            "異なるサイズのシャドウは異なる高さであるべき"
+        );
     }
 }

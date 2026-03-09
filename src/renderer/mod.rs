@@ -58,6 +58,7 @@ pub struct Renderer {
     pub theme_set: ThemeSet,
     pub font_db: Arc<usvg::fontdb::Database>,
     pub font_set: canvas::FontSet,
+    pub shadow_cache: rasterize::ShadowCache,
     pub background_cache: background::BackgroundCache,
 }
 
@@ -80,6 +81,7 @@ impl Renderer {
         let mut font_db = usvg::fontdb::Database::new();
         load_fonts(&mut font_db);
         let font_set = canvas::FontSet::new();
+        let shadow_cache = rasterize::ShadowCache::new();
         let background_cache = background::BackgroundCache::new();
 
         Self {
@@ -87,6 +89,7 @@ impl Renderer {
             theme_set,
             font_db: Arc::new(font_db),
             font_set,
+            shadow_cache,
             background_cache,
         }
     }
@@ -166,6 +169,7 @@ impl Renderer {
                 &lines,
                 &self.font_set,
                 &canvas_options,
+                &self.shadow_cache,
                 bg_pixmap,
                 options.blur_radius,
                 blur_margin,
@@ -175,6 +179,7 @@ impl Renderer {
                 &lines,
                 &self.font_set,
                 &canvas_options,
+                &self.shadow_cache,
             )
         }
     }
