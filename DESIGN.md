@@ -238,6 +238,15 @@ impl From<syntect::Error> for BlazeError {
     }
 }
 
+impl From<poise::serenity_prelude::Error> for BlazeError {
+    fn from(e: poise::serenity_prelude::Error) -> Self {
+        BlazeError::Rendering {
+            message: format!("Discord エラー: {e}"),
+            source: Some(Box::new(e)),
+        }
+    }
+}
+
 impl BlazeError {
     /// ソースエラーなしのレンダリングエラーを作成する
     pub fn rendering(message: impl Into<String>) -> Self {
@@ -349,16 +358,17 @@ pub fn escape_for_svg(text: &str) -> String;
 ### ユーザーテーマ (src/db/models.rs)
 
 ```rust
-#[derive(sqlx::FromRow, Clone)]
+#[derive(Debug, Clone, FromRow)]
 pub struct UserTheme {
     pub user_id: i64,           // Discord user ID
     pub color_scheme: String,   // syntect テーマ名 (e.g. "base16-eighties.dark")
-    pub background_id: String,  // 背景画像識別子 (e.g. "default", "gradient", "denim", "repeated-square-dark")
-    pub blur_radius: f32,       // ガウスぼかし強度 (0.0 - 30.0)
-    pub opacity: f32,           // ウィンドウ不透明度 (0.3 - 1.0)
+    pub background_id: String,  // 背景画像識別子 (e.g. "gradient", "denim", "repeated-square-dark", "none")
+    pub blur_radius: f64,       // ガウスぼかし強度 (0.0 - 30.0)
+    pub opacity: f64,           // ウィンドウ不透明度 (0.3 - 1.0)
     pub font_family: String,    // フォント名 (e.g. "Fira Code")
-    pub title_bar_style: String,    // "macos" | "linux"
-    pub show_line_numbers: bool,    // 行番号表示 (Phase 8 で実装、スキーマは先行準備)
+    pub title_bar_style: String,    // "macos" | "linux" | "plain" | "none"
+    pub show_line_numbers: bool,    // 行番号表示
+    pub updated_at: DateTime<Utc>,  // 最終更新日時
 }
 ```
 
@@ -368,9 +378,8 @@ pub struct UserTheme {
 pub struct Renderer {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
-    pub font_db: Arc<usvg::fontdb::Database>,  // SVGスナップショットテスト用に保持
-    pub font_set: canvas::FontSet,              // デフォルトの fontdue フォントセット（Fira Code）
-    font_sets: HashMap<String, canvas::FontSet>, // フォントファミリー名 → FontSet（各フォント個別のグリフキャッシュを保持）
+    /// フォントファミリー名 → FontSet のマップ（各フォント個別のグリフキャッシュを保持）
+    font_sets: HashMap<String, canvas::FontSet>,
     pub shadow_cache: rasterize::ShadowCache,   // シャドウ Pixmap サイズ別キャッシュ
     pub background_cache: BackgroundCache,      // WebP デコード済みタイルをキャッシュ
 }
@@ -384,10 +393,8 @@ impl Renderer {
         let theme_set: ThemeSet = syntect::dumps::from_uncompressed_data(
             include_bytes!(concat!(env!("OUT_DIR"), "/theme_set.packdump"))
         ).expect("ThemeSet packdump の読み込みに失敗");
-        let mut font_db = usvg::fontdb::Database::new();
-        load_fonts(&mut font_db);
-        let font_set = canvas::FontSet::new();
         // 全フォントファミリー分の FontSet をプリロード
+        // フォントは canvas.rs 内で include_bytes! + fontdue::Font::from_bytes で埋め込みロード
         let mut font_sets = HashMap::new();
         font_sets.insert("Fira Code".into(), canvas::FontSet::with_family(canvas::FontFamily::FiraCode));
         font_sets.insert("PlemolJP".into(), canvas::FontSet::with_family(canvas::FontFamily::PlemolJP));
@@ -395,7 +402,7 @@ impl Renderer {
         let shadow_cache = rasterize::ShadowCache::new();
         let background_cache = BackgroundCache::new();
 
-        Self { syntax_set, theme_set, font_db: Arc::new(font_db), font_set, font_sets, shadow_cache, background_cache }
+        Self { syntax_set, theme_set, font_sets, shadow_cache, background_cache }
     }
 
     /// 直接描画パイプライン: highlight → canvas.rs (fontdue + tiny_skia) → PNG
@@ -437,11 +444,6 @@ impl ShadowCache {
     pub fn get_or_create(&self, svg_width: f32, svg_height: f32) -> Result<Arc<tiny_skia::Pixmap>, BlazeError>;
 }
 
-fn load_fonts(font_db: &mut usvg::fontdb::Database) {
-    font_db.load_font_data(include_bytes!("../assets/fonts/FiraCode-Regular.ttf").to_vec());
-    font_db.load_font_data(include_bytes!("../assets/fonts/PlemolJP-Regular.ttf").to_vec());
-    font_db.load_font_data(include_bytes!("../assets/fonts/HackGenConsoleNF-Regular.ttf").to_vec());
-}
 ```
 
 ### 直接描画モジュール (src/renderer/canvas.rs)
@@ -528,44 +530,26 @@ pub async fn render_message(
 ) -> Result<(), Error> {
     // 0. レート制限チェック
     // ※ defer はバリデーション通過後に呼ぶ。
-    //   エラー時はエフェメラル、成功時は通常メッセージと使い分けるため。
+    //   エラー時は on_error ハンドラがエフェメラルで表示し、
+    //   成功時は通常メッセージとして返信する。
     let user_id = ctx.author().id.get();
     if ctx.data().rate_limiter.check_key(&user_id).is_err() {
-        ctx.send(
-            poise::CreateReply::default()
-                .content("レート制限に達しました。しばらくお待ちください。")
-                .ephemeral(true)
-        ).await?;
-        return Ok(());
+        return Err(BlazeError::RateLimitExceeded);
     }
 
-    // 1. コードブロック抽出 — 見つからない場合はエフェメラルで通知して正常終了
-    let code_block = match extract_code_block(&msg.content) {
-        Some(block) => block,
-        None => {
-            ctx.send(
-                poise::CreateReply::default()
-                    .content("メッセージ内に ``` で囲まれたコードブロックが見つかりませんでした")
-                    .ephemeral(true)
-            ).await?;
-            return Ok(());
-        }
-    };
+    // 1. コードブロック抽出 — 見つからない場合は on_error がエフェメラルで通知
+    let code_block = extract_code_block(&msg.content)
+        .ok_or(BlazeError::CodeBlockNotFound)?;
 
     // 2. 入力バリデーション — リソース制限 (Settings から読み取り)
     let settings = &ctx.data().settings;
     if code_block.code.lines().count() > settings.max_code_lines
         || code_block.code.len() > settings.max_code_chars
     {
-        ctx.send(
-            poise::CreateReply::default()
-                .content(format!(
-                    "コードが長すぎます（上限: {}行 / {}文字）",
-                    settings.max_code_lines, settings.max_code_chars
-                ))
-                .ephemeral(true)
-        ).await?;
-        return Ok(());
+        return Err(BlazeError::CodeTooLong {
+            max_lines: settings.max_code_lines,
+            max_chars: settings.max_code_chars,
+        });
     }
 
     // バリデーション通過 — ここから時間がかかるのでdeferする（非エフェメラル）
@@ -574,22 +558,26 @@ pub async fn render_message(
     // 3. 入力サニタイズ (制御文字除去、Unicode正規化)
     let code_block = code_block.sanitized();
 
-    // 4. ユーザーテーマ取得 (無ければデフォルト)
-    let theme = db::get_user_theme(&ctx.data().db, user_id)
-        .await?
-        .unwrap_or_default();
+    // 4. ユーザーテーマ取得（DB障害時はデフォルトにフォールバック）
+    let user_id = ctx.author().id.get() as i64;
+    let theme = {
+        let repo = PgThemeRepository::new(ctx.data().db.clone());
+        repo.get_theme(user_id as u64)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| UserTheme::with_defaults(user_id))
+    };
 
     // 5. レンダリング → PNG bytes
     //    CPUバウンドなので spawn_blocking で実行
     //    セマフォで同時実行数を制御し、CPUの過負荷を防止
-    let permit = ctx.data().render_semaphore.acquire().await
-        .map_err(|_| BlazeError::rendering("セマフォ取得失敗"))?;
-    let renderer = ctx.data().renderer.clone();
+    let _permit = ctx.data().render_semaphore.acquire().await
+        .map_err(|e| BlazeError::rendering(e.to_string()))?;
+    let renderer = Arc::clone(&ctx.data().renderer);
     let png = tokio::task::spawn_blocking(move || {
-        let result = renderer.render(&code_block, &theme);
-        drop(permit); // レンダリング完了後にセマフォを解放
-        result
+        renderer.render_with_options(&code, language.as_deref(), &theme_name, &render_options)
     }).await.map_err(|e| BlazeError::rendering(e.to_string()))??;
+    drop(_permit);
 
     // 6. 画像をリプライとして送信
     let attachment = serenity::CreateAttachment::bytes(png, "code.png");
@@ -765,17 +753,18 @@ CREATE TABLE IF NOT EXISTS user_themes (
 poise = "0.6"
 tokio = { version = "1", features = ["full"] }
 
-# 構文解析（ランタイム: packdump からロードするため default-syntaxes/default-themes 不要）
+# 構文解析（ランタイムはビルド時ダンプから読み込むため default-syntaxes/default-themes 不要）
 syntect = { version = "5", default-features = false, features = ["parsing", "dump-load", "regex-onig"] }
 
 # 画像生成（直接描画パイプライン）
 fontdue = "0.9"          # グリフラスタライズ（SVGパイプライン排除のコア）
 tiny-skia = "0.11"       # 2Dレンダリング（PathBuilder, Pixmap）
 image = { version = "0.25", default-features = false, features = ["webp", "png"] }  # WebP背景画像デコード・タイリング
-resvg = "0.45"           # SVGスナップショットテスト用（メインパスでは未使用）
+png = "0.17"             # PNG 高速エンコード（Compression::Fast + FilterType::Sub）
 
 # データベース
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "chrono"] }
+chrono = "0.4"           # UserTheme.updated_at の DateTime<Utc> 型
 
 # エラーハンドリング
 thiserror = "2"
@@ -792,7 +781,7 @@ unicode-normalization = "0.1"
 
 # ロギング・監視
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json"] }
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 # マイクロサービス間通信
 redis = { version = "0.27", features = ["tokio-comp"] }  # Redis キュー (Gateway/Worker 分離時)
@@ -804,8 +793,8 @@ dotenvy = "0.15"
 regex = "1"
 
 [build-dependencies]
-# ビルド時に SyntaxSet/ThemeSet の packdump を生成
-syntect = { version = "5", features = ["default-syntaxes", "default-themes", "dump-create", "dump-load", "regex-onig"] }
+# build.rs で SyntaxSet/ThemeSet をバイナリダンプするため、デフォルト構文・テーマが必要
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
 # デフォルトに含まれないモダン言語の構文定義を追加（TypeScript, Kotlin, TOML 等 80+言語）
 two-face = { version = "0.5", default-features = false, features = ["syntect-default-onig"] }
 
@@ -850,18 +839,17 @@ insta = "1"            # スナップショットテスト
 - **ドロップシャドウの直接描画**: SVG の `feDropShadow` フィルタを除去し、tiny_skia で矩形を描画 → `image::imageops::blur` でぼかし → 2xスケールで合成。resvg 内部のフィルタ処理（パイプライン全体の30〜50%を占めていた）を回避
 - **シャドウの1/4ダウンスケール**: `create_shadow_pixmap` は1/4サイズで描画+ぼかしを行い、ダウンスケールされた Pixmap を返す。合成時に `draw_pixmap` が `SHADOW_DRAW_SCALE`（= SCALE × 4.0 = 8.0）でアップスケールするため、upscale 処理を `draw_pixmap` に委ね、中間 Pixmap のメモリ確保を削減
 - **ぼかし処理のダウンスケール最適化**: 背景ぼかしは1/2にダウンスケール → blur_radius も1/2に。`blur_pixmap` はダウンスケールされた Pixmap とスケール倍率のタプルを返し、元サイズへの復元は `draw_pixmap` のスケール変換に委ねる。ぼかし計算量を約1/4に削減（ぼかし後は細部が消えるため品質劣化なし）
-- **resvg 直接描画（SVGパス）**: SVG ベースのレガシーパス（`rasterize()` / `rasterize_with_background()`）では、中間の `code_pixmap` を確保せず `resvg::render()` で直接 `final_pixmap` に描画する。ただしメインパスでは使用されない
-- **rasterize_direct / rasterize_direct_with_background**: SVG を経由しない新しいエントリポイント。`rasterize_direct` は `render_code_onto_pixmap()` で `final_pixmap` に直接描画し、中間 Pixmap の確保を排除。`&ShadowCache` を引数に取り、シャドウ Pixmap を `Arc` でキャッシュから取得する
+- **rasterize_direct / rasterize_direct_with_background**: レンダリングのエントリポイント。`rasterize_direct` は `render_code_onto_pixmap()` で `final_pixmap` に直接描画し、中間 Pixmap の確保を排除。`&ShadowCache` を引数に取り、シャドウ Pixmap を `Arc` でキャッシュから取得する
 - **ShadowCache によるシャドウ Pixmap キャッシュ（Phase 14→15）**: `ShadowCache`（`RwLock<HashMap<(u32, u32), Arc<tiny_skia::Pixmap>>>`）がシャドウ Pixmap を `(svg_width, svg_height)` でキャッシュする。RwLock で読み取りは共有ロック、Arc で Pixmap clone（数十KB memcpy）を pointer clone に置換。シャドウはコード内容やテーマに依存せず、サイズのみで決まるため高いヒット率を実現。幅は常に 864px、高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50
 - **背景ぼかし・コード描画の並列実行**: `rasterize_direct_with_background()` ではシャドウを `ShadowCache` から即座に取得し、`std::thread::scope` で `blur_pixmap` と `render_code_pixmap` の2処理を並列実行する（キャッシュ導入前は3スレッドだったが、シャドウ生成が不要になり2スレッドに削減）
 - **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
 - **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `png` crate を直接利用し `Compression::Fast` + `FilterType::Sub`（Sub フィルタは隣接ピクセルの差分をとることで圧縮効率を改善） で高速にエンコードする。`image` crate 経由より直接的で、`Vec::with_capacity` による事前確保でアロケーションも最適化
-- **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
+- **レンダリングは `spawn_blocking`**: ラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない
 - **コードブロック抽出は正規表現**: `` ```(\w*)\n([\s\S]*?)``` `` で言語タグとコード本体を分離。`LazyLock` でコンパイル結果をキャッシュし、毎メッセージの再コンパイルを排除
 - **Graceful Shutdown**: `tokio::signal` で SIGINT / SIGTERM を受け取り、処理中の `spawn_blocking` タスク（レンダリング）が完了してからBotプロセスを終了する
 - **Discord API 429 リトライ**: serenity/poise はDiscord APIからの `429 Too Many Requests` レスポンスに対して、`Retry-After` ヘッダに基づく自動リトライを内蔵している。独自のリトライロジックは実装しない。ただし、Bot側のレート制限（`governor`）でリクエスト頻度を事前に抑制し、429を極力発生させない設計とする
 - **レンダリング同時実行数制御**: `tokio::sync::Semaphore` で `spawn_blocking` の同時実行数を `Settings.max_concurrent_renders`（デフォルト: 4）に制限し、CPU飽和を防止する
-- **fontdue によるフォントフォールバック**: `FontSet::rasterize_char()` は `primary.lookup_glyph_index(ch)` でグリフの存在を確認し、0（未定義）なら `fallback` にフォールバックする。usvg/resvg の fontdb によるフォント解決を経由しないため、フォント選択のオーバーヘッドが極小。`FontFamily` enum により Fira Code / PlemolJP / HackGen Console NF の切替が可能で、各 FontSet は独立したグリフキャッシュを保持する
+- **fontdue によるフォントフォールバック**: `FontSet::rasterize_char()` は `primary.lookup_glyph_index(ch)` でグリフの存在を確認し、0（未定義）なら `fallback` にフォールバックする。fontdue で直接フォントを解決するため、フォント選択のオーバーヘッドが極小。`FontFamily` enum により Fira Code / PlemolJP / HackGen Console NF の切替が可能で、各 FontSet は独立したグリフキャッシュを保持する
 
 ---
 
@@ -932,23 +920,23 @@ insta = "1"            # スナップショットテスト
 不特定多数のユーザーからの巨大な入力によるOOMや処理遅延を防ぐ。
 
 - コード抽出直後にハードリミット（最大100行 / 最大4000文字）のバリデーションを実施
-- 超過時はエフェメラルメッセージで通知し、`Ok(())` で正常終了（システムエラーにしない）
+- 超過時は `Err(BlazeError::CodeTooLong)` を返し、`on_error` ハンドラがエフェメラルメッセージで通知
 
 ### 2. CJK（日本語等）フォントのフォールバック処理
 
 コード内の日本語コメントの文字化け（豆腐化）を防ぐ。
 
-- SVG の `font-family` 属性: `"Fira Code", "PlemolJP", "HackGen Console NF", sans-serif`（ユーザー設定に応じて変動）
-- `Renderer::new()` 内で `load_fonts()` を呼び出し、英字・日本語フォントの全3種をロード
-- フォント読み込みの実装詳細は「レンダラー」型定義および改善要件 #11 を参照
+- `canvas.rs` 内で `include_bytes!` + `fontdue::Font::from_bytes` により英字・日本語フォントの全3種を埋め込みロード
+- `FontSet` が `FontFamily` enum に応じてプライマリ＋フォールバックのフォントペアを構成し、`lookup_glyph_index` でフォールバックを解決
+- フォント読み込みの実装詳細は「直接描画モジュール (src/renderer/canvas.rs)」を参照
 
 ### 3. UXを考慮したエラーハンドリング
 
 対象メッセージにコードブロックが無い場合の挙動改善。
 
 - `extract_code_block` は `Option<CodeBlock>` を返す（`Result` ではなく）
-- `None` の場合は「メッセージ内に ``` で囲まれたコードブロックが見つかりませんでした」とエフェメラルで通知し、`Ok(())` で終了
-- 内部ログにエラーノイズを残さない
+- `None` の場合は `Err(BlazeError::CodeBlockNotFound)` を返し、`on_error` ハンドラがエフェメラルで通知
+- ユーザー起因エラーはログに残さず、内部エラーのみ `error!` でログ出力
 
 ### 4. パフォーマンス最適化（DB層の分離とキャッシュ準備）
 
@@ -972,23 +960,22 @@ DBアクセスの抽象化により、将来的なインメモリキャッシュ
 
 - デフォルト: 1分間に10リクエスト（`Settings.rate_limit_per_minute` で変更可能）
 - `Data` 構造体に `DefaultKeyedRateLimiter<u64>` を保持
-- 超過時はエフェメラルメッセージで通知し、`Ok(())` で正常終了
+- 超過時は `Err(BlazeError::RateLimitExceeded)` を返し、`on_error` ハンドラがエフェメラルで通知
 
 ### 6. 独自エラー型
 
 `Box<dyn Error>` を `BlazeError`（`thiserror` ベース）に置換する。
 
 - バリアント: `CodeBlockNotFound`, `CodeTooLong { max_lines, max_chars }`, `Database`, `Rendering { message, source }`, `RateLimitExceeded`, `InvalidTheme`, `Config`
-- `sqlx::Error`, `syntect::Error` からの `From` 実装で自動変換
+- `sqlx::Error`, `syntect::Error`, `poise::serenity_prelude::Error` からの `From` 実装で自動変換
 - ユーザー向けメッセージとログ向けメッセージを分離可能
 
 ### 7. 入力サニタイズ
 
-SVGインジェクション防止と文字化け防止のための入力正規化。
+不正な入力による描画異常防止と文字化け防止のための入力正規化。
 
 - `sanitize_code`: 制御文字除去（タブ・改行は許可）、Unicode NFC正規化
-- `escape_for_svg`: `&`, `<`, `>`, `"` をSVGエンティティにエスケープ
-- SVG生成時にすべてのユーザー入力テキストを `escape_for_svg` 経由で出力
+- `escape_for_svg`: `&`, `<`, `>`, `"` をSVGエンティティにエスケープ（スナップショットテスト用の SVG 生成でのみ使用）
 
 ### 8. 設定管理の強化
 
@@ -1046,7 +1033,7 @@ PythonやGoなどインデントが重要な言語で、コードが左詰めに
 
 - **BackgroundCache**: WebP 画像を起動時に1回だけデコードし、`image::RgbaImage` としてキャッシュ
 - **Pixmap 直接合成**: PNG エンコード/デコードの往復を排除。`tiny_skia::Pixmap` ベースで背景タイリング → ぼかし → コード合成
-- **SVG の軽量化**: 背景画像を SVG に Base64 埋め込みしない。コードのみの軽量 SVG を resvg でラスタライズし、背景は rasterize 側で合成
+- **SVG パイプライン排除**: 背景画像を SVG に Base64 埋め込みせず、fontdue + tiny_skia で直接描画し、rasterize 側で背景と合成
 - **テクスチャ背景のタイリング**: `image::imageops::overlay` で小さなタイル画像を対象サイズまで敷き詰め
 
 ### 15. 行番号表示（将来）
@@ -1055,7 +1042,7 @@ PythonやGoなどインデントが重要な言語で、コードが左詰めに
 
 - DBスキーマに `show_line_numbers` カラムを初期段階から含めておく（マイグレーションコスト回避）
 - `/theme set` コマンドに `show_line_numbers: Option<bool>` パラメータを追加
-- SVG生成時に行番号列を左側に追加（固定幅・薄い色で表示）
+- canvas.rs の直接描画で行番号列を左側に追加（固定幅・薄い色で表示）
 
 ### 16. 国際化（i18n）対応（将来）
 
