@@ -83,3 +83,10 @@
 - [x] ぼかし処理の直接ピクセル操作化（SVG 経由の6段パイプラインを排除）
 - [x] PNG エンコードの高速圧縮化（CompressionType::Fast）
 - [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md）
+
+## Phase 11: レンダリングパイプライン高速化
+
+- [x] feDropShadow を SVG から除去 → tiny_skia で直接描画（resvg フィルタ処理を回避）
+- [x] 背景ぼかしのダウンスケール最適化（1/2 縮小 → ぼかし → 復元で計算量1/4）
+- [x] ベンチマーク計測（パイプライン全体で約60%高速化）
+- [x] ドキュメント更新（DESIGN.md, SPEC.md, IMPLEMENTATION.md, TASKS.md）

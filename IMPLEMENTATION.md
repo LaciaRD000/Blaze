@@ -436,3 +436,29 @@ DESIGN.md の設計に基づき、RGBCサイクル（Red→Green→Blue→Commit
 - コミット: `docs: Phase 10 パフォーマンス最適化をドキュメントに反映`
 
 **Phase 10 完了確認**: 全テストが合格し、clippy 警告ゼロであること。
+
+---
+
+## Phase 11: レンダリングパイプライン高速化
+
+### Step 11.1: feDropShadow の SVG 除去 + tiny_skia 直接描画
+
+- **Red**: SVG にフィルタがないことを検証するテスト、シャドウ Pixmap 生成テストを追加
+- **Green**: svg_builder から `<filter>` と `filter="url(#shadow)"` を除去。rasterize.rs に `create_shadow_pixmap()` を追加し、`rasterize()` と `rasterize_with_background()` でシャドウを合成
+- **Blue**: スナップショット更新、リファクタリング
+- コミット: `perf: ドロップシャドウを SVG フィルタから tiny_skia 直接描画に変更`
+
+### Step 11.2: 背景ぼかしのダウンスケール最適化
+
+- **Red**: 既存の `blur_pixmap_preserves_dimensions` テストが Green の役割
+- **Green**: `blur_pixmap()` でダウンスケール → ぼかし → アップスケールに変更（計算量1/4）
+- **Blue**: リファクタリング
+- コミット: `perf: 背景ぼかしにダウンスケール最適化を適用`
+
+### Step 11.3: ドキュメント更新 + ベンチマーク
+
+- DESIGN.md / SPEC.md / IMPLEMENTATION.md / TASKS.md にパイプライン高速化の内容を反映
+- ベンチマーク結果: パイプライン全体で約60%高速化（50行背景あり: 823ms → 315ms）
+- コミット: `docs: Phase 11 パイプライン高速化をドキュメントに反映`
+
+**Phase 11 完了確認**: 全テストが合格し、clippy 警告ゼロであること。

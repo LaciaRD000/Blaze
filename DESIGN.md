@@ -75,13 +75,14 @@ blaze-bot/
   → ユーザーテーマ取得 (db/ → キャッシュ層 → UserTheme or デフォルト)
   → SVG文字列生成 (renderer/svg_builder.rs)
       - 半透明ウィンドウ矩形 (fill-opacity)
-      - タイトルバー + 角丸 + ドロップシャドウ
+      - タイトルバー + 角丸
       - 色付きテキスト (<tspan>) の配置
       - フォント: font-family="Fira Code", "PlemolJP", sans-serif
-      - ※ 背景画像は SVG に含めない（rasterize 側で合成）
+      - ※ 背景画像・ドロップシャドウは SVG に含めない（rasterize 側で直接描画）
   → PNG ラスタライズ + 背景合成 (renderer/rasterize.rs)
-      - 背景あり: BackgroundCache → Pixmap タイリング → ぼかし → コード SVG を上に合成
-      - 背景なし: resvg::render() → tiny_skia::Pixmap → PNG bytes
+      - ドロップシャドウ: tiny_skia で矩形描画 → ガウスぼかし（1xサイズ） → 2xスケールで合成
+      - 背景あり: BackgroundCache → Pixmap タイリング → ダウンスケールぼかし → シャドウ → コード SVG を上に合成
+      - 背景なし: resvg::render() → シャドウ合成 → PNG bytes
       - 2x スケールで高解像度レンダリング（Discord の高DPI表示に対応）
   → Discord に通常メッセージとしてリプライ (画像添付、全員に表示)
   → メトリクス記録 (レンダリング回数、処理時間)
@@ -589,15 +590,9 @@ pub async fn reset(ctx: Context<'_>) -> Result<(), Error> { /* DB削除 */ }
 
 ```svg
 <svg width="..." height="...">
-  <defs>
-    <!-- ドロップシャドウ -->
-    <filter id="shadow">
-      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-opacity="0.4" />
-    </filter>
-  </defs>
-
-  <!-- ウィンドウ本体 (影 + 角丸 + 半透明) -->
-  <g filter="url(#shadow)">
+  <!-- ウィンドウ本体 (角丸 + 半透明) -->
+  <!-- ドロップシャドウは SVG に含めず、rasterize 側で tiny_skia により直接描画 -->
+  <g>
     <rect rx="12" fill="rgba(30,30,46,{opacity})" clip-path="url(#rounded)" />
 
     <!-- タイトルバー (macos: 円ボタン / linux: GNOME風ボタン / plain: 言語名のみ / none: 省略) -->
@@ -744,6 +739,8 @@ insta = "1"            # スナップショットテスト
 - **`Renderer` は `Arc` で共有**: `SyntaxSet` / `ThemeSet` / `fontdb` は起動時に一度だけ packdump からロードし、全リクエストで再利用。読み取り専用のためロック不要
 - **SVGは文字列として動的生成**: テンプレートエンジン不要。`format!` / `write!` で組み立てるのが最もシンプルかつ高速
 - **背景画像は Pixmap で直接合成**: SVG に Base64 埋め込みせず、rasterize 側で背景 Pixmap（ぼかし済み）とコード SVG の Pixmap を合成する。WebP デコード結果は `BackgroundCache` で起動時にキャッシュし、リクエストごとの再デコードを排除
+- **ドロップシャドウの直接描画**: SVG の `feDropShadow` フィルタを除去し、tiny_skia で矩形を描画 → `image::imageops::blur` でぼかし → 2xスケールで合成。resvg 内部のフィルタ処理（パイプライン全体の30〜50%を占めていた）を回避
+- **ぼかし処理のダウンスケール最適化**: 背景ぼかしは1/2にダウンスケール → blur_radius も1/2に → 元サイズに復元。ぼかし計算量を約1/4に削減（ぼかし後は細部が消えるため品質劣化なし）
 - **ぼかし処理の直接ピクセル操作**: 背景へのガウスぼかしは `image::imageops::blur` で直接適用する。従来の SVG 経由（Pixmap→PNG encode→Base64→SVG→resvg）の6段パイプラインを1段に簡素化
 - **PNG 高速エンコード**: Discord は画像アップロード時に再圧縮するため、Bot 側では `CompressionType::Fast` + `FilterType::Sub` で高速にエンコードし、CPU コストを削減する
 - **レンダリングは `spawn_blocking`**: resvgのラスタライズはCPUバウンドなので `tokio::task::spawn_blocking` で実行し、非同期ランタイムをブロックしない

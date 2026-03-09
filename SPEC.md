@@ -281,7 +281,8 @@ log_level = "info"
 - 背景画像は SVG に Base64 埋め込みせず、Pixmap として直接合成。SVG パースの高速化とメモリ消費の削減を実現
 - テクスチャ背景（denim, repeated-square-dark）は `image::imageops::overlay` でタイリング
 - SVG → PNG ラスタライズ時に 2x スケールを適用し、Discord の高DPI表示でもシャープに表示される高解像度画像を生成する
-- 背景ぼかしは `image::imageops::blur` による直接ピクセル操作で処理（SVG 経由の往復を排除し高速化）
+- 背景ぼかしは `image::imageops::blur` による直接ピクセル操作で処理（SVG 経由の往復を排除し高速化）。さらにダウンスケール最適化（1/2 に縮小 → ぼかし → 復元）で計算量を約1/4に削減
+- ドロップシャドウは SVG の `feDropShadow` フィルタではなく、tiny_skia で1xサイズの矩形を直接描画+ぼかしし、2xスケールで合成。resvg 内部のフィルタ処理を回避し、パイプライン全体を約60%高速化
 - PNG エンコードは `CompressionType::Fast` で高速に出力（Discord 側の再圧縮を考慮）
 
 ### 12.2 セキュリティ

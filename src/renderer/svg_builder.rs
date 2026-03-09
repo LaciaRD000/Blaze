@@ -89,19 +89,11 @@ pub fn build_svg(lines: &[HighlightedLine], options: &SvgOptions) -> String {
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="{total_width}" height="{total_height}">"##
     );
 
-    // defs: フィルタ定義
-    let _ = write!(svg, r##"<defs>"##);
-    // ドロップシャドウフィルタ
+    // ウィンドウグループ（角丸）
+    // シャドウは rasterize 側で tiny_skia により直接描画（resvg のフィルタ処理を回避）
     let _ = write!(
         svg,
-        r##"<filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="16" flood-opacity="0.4"/></filter>"##
-    );
-    let _ = write!(svg, r##"</defs>"##);
-
-    // ウィンドウグループ（シャドウ + 角丸）
-    let _ = write!(
-        svg,
-        r##"<g transform="translate({SHADOW_MARGIN},{SHADOW_MARGIN})" filter="url(#shadow)">"##
+        r##"<g transform="translate({SHADOW_MARGIN},{SHADOW_MARGIN})">"##
     );
 
     // ウィンドウ背景（角丸 + 半透明）
@@ -472,15 +464,15 @@ mod tests {
     }
 
     #[test]
-    fn build_svg_has_drop_shadow_filter() {
+    fn build_svg_has_no_svg_filter() {
         let svg = build_svg(&sample_lines(), &default_options());
         assert!(
-            svg.contains("feDropShadow") || svg.contains("feGaussianBlur"),
-            "ドロップシャドウフィルタが含まれるべき"
+            !svg.contains("<filter"),
+            "SVGにフィルタが含まれないべき（シャドウは rasterize 側で描画）"
         );
         assert!(
-            svg.contains("filter=\"url(#shadow)\""),
-            "シャドウフィルタが適用されているべき"
+            !svg.contains("filter=\""),
+            "SVG要素にfilter属性がないべき"
         );
     }
 

@@ -31,6 +31,49 @@ fn encode_png_fast(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError> {
     Ok(buf)
 }
 
+/// ドロップシャドウ定数
+const SHADOW_MARGIN: f32 = 32.0;
+const SHADOW_DY: f32 = 8.0;
+const SHADOW_SIGMA: f32 = 16.0;
+const SHADOW_OPACITY: u8 = 102; // floor(0.4 * 255)
+
+/// ドロップシャドウの Pixmap を1xサイズで生成する
+/// SVG の feDropShadow を tiny_skia で直接実現し、resvg 内部のフィルタ処理を回避
+/// 1xで描画+ぼかしを行い、合成時に2xスケールすることでぼかし計算量を1/4に削減
+fn create_shadow_pixmap(
+    svg_width: f32,
+    svg_height: f32,
+) -> Result<tiny_skia::Pixmap, BlazeError> {
+    let w = svg_width as u32;
+    let h = svg_height as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(w, h)
+        .ok_or_else(|| BlazeError::rendering("シャドウPixmap作成に失敗"))?;
+
+    // ウィンドウ形状の矩形を半透明黒で描画
+    // blur sigma=16 がコーナーを十分に丸めるため、角丸パスは不要
+    let rect = tiny_skia::Rect::from_xywh(
+        SHADOW_MARGIN,
+        SHADOW_MARGIN + SHADOW_DY,
+        svg_width - SHADOW_MARGIN * 2.0,
+        svg_height - SHADOW_MARGIN * 2.0,
+    )
+    .ok_or_else(|| BlazeError::rendering("シャドウRect作成に失敗"))?;
+
+    let mut paint = tiny_skia::Paint::default();
+    paint.set_color_rgba8(0, 0, 0, SHADOW_OPACITY);
+    pixmap.fill_rect(
+        rect,
+        &paint,
+        tiny_skia::Transform::identity(),
+        None,
+    );
+
+    // ガウスぼかしを適用してシャドウを拡散
+    let rgba = pixmap_to_rgba(&pixmap);
+    let blurred = image::imageops::blur(&rgba, SHADOW_SIGMA);
+    super::background::rgba_to_pixmap(&blurred)
+}
+
 /// SVG文字列をPNGバイト列に変換する（背景なし）
 pub fn rasterize(
     svg: &str,
@@ -47,16 +90,38 @@ pub fn rasterize(
     let width = (size.width() * SCALE) as u32;
     let height = (size.height() * SCALE) as u32;
 
-    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+    let mut code_pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("Pixmap の作成に失敗"))?;
 
     resvg::render(
         &tree,
         tiny_skia::Transform::from_scale(SCALE, SCALE),
-        &mut pixmap.as_mut(),
+        &mut code_pixmap.as_mut(),
     );
 
-    encode_png_fast(&pixmap)
+    // シャドウを1xで生成し、2xスケールで合成
+    let shadow = create_shadow_pixmap(size.width(), size.height())?;
+    let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
+
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        shadow.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::from_scale(SCALE, SCALE),
+        None,
+    );
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        code_pixmap.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::identity(),
+        None,
+    );
+
+    encode_png_fast(&final_pixmap)
 }
 
 /// tiny_skia::Pixmap (premultiplied alpha) → image::RgbaImage (straight alpha) に変換
@@ -80,7 +145,8 @@ fn pixmap_to_rgba(pixmap: &tiny_skia::Pixmap) -> image::RgbaImage {
 }
 
 /// 背景 Pixmap にガウスぼかしを適用する
-/// image クレートの直接ピクセル操作で処理（SVG 経由の往復を排除）
+/// ダウンスケール → ぼかし → 元サイズに戻すことで計算量を約1/4に削減
+/// ぼかし後は細部が消えるため、ダウンスケールによる品質劣化は視覚的に無視できる
 fn blur_pixmap(
     bg: tiny_skia::Pixmap,
     blur_radius: f64,
@@ -89,14 +155,36 @@ fn blur_pixmap(
         return Ok(bg);
     }
 
+    let orig_w = bg.width();
+    let orig_h = bg.height();
+
     // Premultiplied → Straight alpha
     let rgba = pixmap_to_rgba(&bg);
 
-    // ガウスぼかし適用
-    let blurred = image::imageops::blur(&rgba, blur_radius as f32);
+    // 1/2 にダウンスケールしてぼかし計算を軽量化
+    let half_w = (orig_w / 2).max(1);
+    let half_h = (orig_h / 2).max(1);
+    let downscaled = image::imageops::resize(
+        &rgba,
+        half_w,
+        half_h,
+        image::imageops::FilterType::Triangle,
+    );
+
+    // ダウンスケール分だけ blur_radius も半分に
+    let blurred =
+        image::imageops::blur(&downscaled, (blur_radius / 2.0) as f32);
+
+    // 元のサイズに戻す
+    let upscaled = image::imageops::resize(
+        &blurred,
+        orig_w,
+        orig_h,
+        image::imageops::FilterType::Triangle,
+    );
 
     // Straight → Premultiplied alpha
-    super::background::rgba_to_pixmap(&blurred)
+    super::background::rgba_to_pixmap(&upscaled)
 }
 
 /// 背景 Pixmap 付きでコード SVG をラスタライズする
@@ -131,7 +219,10 @@ pub fn rasterize_with_background(
     // 2. 背景にぼかしを適用（1xサイズで処理、軽量）
     let blurred_bg = blur_pixmap(bg_pixmap, blur_radius)?;
 
-    // 3. 最終キャンバスに合成: ぼかし背景（2xスケール）→ コード
+    // 3. シャドウを1xで生成
+    let shadow = create_shadow_pixmap(size.width(), size.height())?;
+
+    // 4. 最終キャンバスに合成: ぼかし背景 → シャドウ → コード
     let mut final_pixmap = tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| BlazeError::rendering("最終Pixmap作成に失敗"))?;
 
@@ -144,6 +235,16 @@ pub fn rasterize_with_background(
         &tiny_skia::PixmapPaint::default(),
         tiny_skia::Transform::from_scale(SCALE, SCALE)
             .pre_translate(offset / SCALE, offset / SCALE),
+        None,
+    );
+
+    // シャドウを2xスケールで描画
+    final_pixmap.draw_pixmap(
+        0,
+        0,
+        shadow.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::from_scale(SCALE, SCALE),
         None,
     );
 
@@ -253,6 +354,29 @@ mod tests {
             blur_pixmap(bg, 5.0).expect("ぼかしに成功するべき");
         assert_eq!(blurred.width(), 200);
         assert_eq!(blurred.height(), 150);
+    }
+
+    #[test]
+    fn create_shadow_pixmap_produces_valid_pixmap() {
+        let shadow = create_shadow_pixmap(864.0, 192.0)
+            .expect("シャドウPixmap生成に成功するべき");
+        assert_eq!(shadow.width(), 864);
+        assert_eq!(shadow.height(), 192);
+    }
+
+    #[test]
+    fn create_shadow_pixmap_has_opaque_center() {
+        // シャドウの中央付近には不透明ピクセルがあるべき
+        let shadow = create_shadow_pixmap(864.0, 192.0)
+            .expect("シャドウPixmap生成に成功するべき");
+        let cx = shadow.width() / 2;
+        let cy = shadow.height() / 2;
+        let idx = ((cy * shadow.width() + cx) * 4) as usize;
+        let alpha = shadow.data()[idx + 3];
+        assert!(
+            alpha > 0,
+            "シャドウの中央は不透明であるべき: alpha={alpha}"
+        );
     }
 
     #[test]
