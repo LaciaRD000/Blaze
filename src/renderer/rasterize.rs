@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use resvg::usvg;
 
@@ -90,8 +90,9 @@ const SHADOW_DRAW_SCALE: f32 = SCALE * 4.0;
 /// シャドウ Pixmap のサイズ別キャッシュ
 /// シャドウは (svg_width, svg_height) にのみ依存し、幅は常に 864px、
 /// 高さは行数+タイトルバースタイルで決まるため、パターン数は高々 ~50
+/// RwLock で読み取りは共有ロック、Arc で Pixmap clone (数十KB) を回避
 pub struct ShadowCache {
-    cache: Mutex<HashMap<(u32, u32), tiny_skia::Pixmap>>,
+    cache: RwLock<HashMap<(u32, u32), Arc<tiny_skia::Pixmap>>>,
 }
 
 impl Default for ShadowCache {
@@ -103,7 +104,7 @@ impl Default for ShadowCache {
 impl ShadowCache {
     pub fn new() -> Self {
         Self {
-            cache: Mutex::new(HashMap::new()),
+            cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -112,23 +113,18 @@ impl ShadowCache {
         &self,
         svg_width: f32,
         svg_height: f32,
-    ) -> Result<tiny_skia::Pixmap, BlazeError> {
+    ) -> Result<Arc<tiny_skia::Pixmap>, BlazeError> {
         let key = (svg_width as u32, svg_height as u32);
 
-        // 読み取りチェック
-        {
-            let cache = self.cache.lock().expect("ShadowCache lock");
-            if let Some(cached) = cache.get(&key) {
-                return Ok(cached.clone());
-            }
+        // Fast path: 読み取りロックでキャッシュヒットを確認
+        if let Some(cached) = self.cache.read().expect("ShadowCache read lock").get(&key) {
+            return Ok(Arc::clone(cached));
         }
 
-        // キャッシュミス: 生成してから格納
-        let shadow = create_shadow_pixmap(svg_width, svg_height)?;
-        {
-            let mut cache = self.cache.lock().expect("ShadowCache lock");
-            cache.insert(key, shadow.clone());
-        }
+        // Slow path: 生成して書き込みロックで格納
+        let shadow = Arc::new(create_shadow_pixmap(svg_width, svg_height)?);
+        self.cache.write().expect("ShadowCache write lock")
+            .insert(key, Arc::clone(&shadow));
         Ok(shadow)
     }
 }
@@ -320,7 +316,7 @@ pub fn rasterize_direct(
     final_pixmap.draw_pixmap(
         0,
         0,
-        shadow.as_ref(),
+        (*shadow).as_ref(),
         &tiny_skia::PixmapPaint::default(),
         tiny_skia::Transform::from_scale(
             SHADOW_DRAW_SCALE,
@@ -400,7 +396,7 @@ pub fn rasterize_direct_with_background(
     final_pixmap.draw_pixmap(
         0,
         0,
-        shadow.as_ref(),
+        (*shadow).as_ref(),
         &tiny_skia::PixmapPaint::default(),
         tiny_skia::Transform::from_scale(
             SHADOW_DRAW_SCALE,
