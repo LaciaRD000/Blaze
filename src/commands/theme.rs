@@ -152,7 +152,7 @@ pub async fn set(
         };
     }
     if let Some(sln) = show_line_numbers {
-        theme.show_line_numbers = if sln { 1 } else { 0 };
+        theme.show_line_numbers = sln;
     }
 
     repo.upsert_theme(&theme).await?;
@@ -222,7 +222,7 @@ pub async fn preview(ctx: Context<'_>) -> Result<(), Error> {
         title_bar_style: theme.title_bar_style.clone(),
         opacity: theme.opacity,
         blur_radius: theme.blur_radius,
-        show_line_numbers: theme.show_line_numbers != 0,
+        show_line_numbers: theme.show_line_numbers,
         max_line_length: Some(max_line_length),
         background_image: if theme.background_id == "none" {
             None

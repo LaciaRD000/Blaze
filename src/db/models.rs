@@ -11,7 +11,7 @@ pub struct UserTheme {
     pub opacity: f64,
     pub font_family: String,
     pub title_bar_style: String,
-    pub show_line_numbers: i32,
+    pub show_line_numbers: bool,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -26,7 +26,7 @@ impl UserTheme {
             opacity: 0.75,
             font_family: "Fira Code".to_string(),
             title_bar_style: "macos".to_string(),
-            show_line_numbers: 0,
+            show_line_numbers: false,
             updated_at: Utc::now(),
         }
     }

@@ -252,7 +252,7 @@ pub struct Settings {
     // 環境変数 (DISCORD_TOKEN, DATABASE_URL) から直接読み取る
     pub max_code_lines: usize,      // デフォルト: 100
     pub max_code_chars: usize,      // デフォルト: 4000
-    pub max_line_length: usize,     // デフォルト: 120 (超過行はトリミング + "...")
+    pub max_line_length: usize,     // デフォルト: 120 (超過行はトリミング + "…")
     pub rate_limit_per_minute: u32, // デフォルト: 10
     pub max_concurrent_renders: usize, // デフォルト: 4
     pub log_level: String,          // デフォルト: "info"
@@ -1024,7 +1024,7 @@ PythonやGoなどインデントが重要な言語で、コードが左詰めに
 ミニファイされたコード等の極端に長い行による画像幅の爆発を防止する。
 
 - `Settings` に `max_line_length`（デフォルト: 120文字）を追加
-- `svg_builder` で超過行をトリミングし、末尾に `...` を表示する
+- `svg_builder` で超過行をトリミングし、末尾に `…` を表示する
 - 画像幅は `max_line_length` に基づいて固定し、Discordの表示領域を超過しない
 
 ### 14. 背景画像のパフォーマンス最適化

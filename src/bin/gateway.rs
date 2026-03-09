@@ -123,7 +123,7 @@ async fn render_message(
             title_bar_style: theme.title_bar_style.clone(),
             opacity: theme.opacity,
             blur_radius: theme.blur_radius,
-            show_line_numbers: theme.show_line_numbers != 0,
+            show_line_numbers: theme.show_line_numbers,
             max_line_length: Some(settings.max_line_length),
             font_family: Some(theme.font_family.clone()),
             background_image: if theme.background_id == "none" {
