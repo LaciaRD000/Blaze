@@ -13,7 +13,7 @@ fn encode_png_fastest(pixmap: &tiny_skia::Pixmap) -> Result<Vec<u8>, BlazeError>
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_compression(png::Compression::Fast);
-    encoder.set_filter(png::FilterType::NoFilter);
+    encoder.set_filter(png::FilterType::Sub);
     let mut writer = encoder
         .write_header()
         .map_err(|e| BlazeError::rendering(format!("PNGヘッダ書き込み失敗: {e}")))?;

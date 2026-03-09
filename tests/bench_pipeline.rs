@@ -100,7 +100,7 @@ fn run_benchmark(label: &str, code: &str, language: Option<&str>) {
         highlight::highlight(code, language, &renderer.syntax_set, theme);
     let t1 = t.elapsed().as_micros();
 
-    // 2. canvas 直接描画（fontdue + tiny_skia）
+    // 2. canvas 直接描画（fontdue + tiny_skia）— render_code_onto_pixmap で計測
     let t = Instant::now();
     let canvas_options = CanvasOptions {
         bg_color: [bg.r, bg.g, bg.b],
@@ -110,9 +110,15 @@ fn run_benchmark(label: &str, code: &str, language: Option<&str>) {
         max_line_length: options.max_line_length,
         show_line_numbers: options.show_line_numbers,
     };
-    let code_pixmap =
-        canvas::render_code_pixmap(&highlighted, &renderer.font_set, &canvas_options, 2.0)
-            .unwrap();
+    let (total_w, total_h) = canvas::calculate_dimensions(
+        highlighted.len(), canvas_options.title_bar_style,
+    );
+    let width = (total_w * 2.0) as u32;
+    let height = (total_h * 2.0) as u32;
+    let mut code_pixmap = tiny_skia::Pixmap::new(width, height).unwrap();
+    canvas::render_code_onto_pixmap(
+        &mut code_pixmap, &highlighted, &renderer.font_set, &canvas_options, 2.0,
+    );
     let t2 = t.elapsed().as_micros();
 
     // 3. 背景 Pixmap 生成
@@ -203,18 +209,18 @@ fn run_benchmark(label: &str, code: &str, language: Option<&str>) {
     );
     let t6 = t.elapsed().as_micros();
 
-    // 7. PNG エンコード
+    // 7. PNG エンコード（png crate 直接: NoFilter + Fast）
     let t = Instant::now();
-    use image::ImageEncoder;
-    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-    let mut png_buf = Vec::new();
-    PngEncoder::new_with_quality(&mut png_buf, CompressionType::Fast, FilterType::Sub)
-        .write_image(
-            final_pixmap.data(),
-            width, height,
-            image::ExtendedColorType::Rgba8,
-        )
-        .unwrap();
+    let data = final_pixmap.data();
+    let mut png_buf = Vec::with_capacity(data.len() + 1024);
+    let mut encoder = png::Encoder::new(&mut png_buf, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::FilterType::Sub);
+    let mut writer = encoder.write_header().unwrap();
+    writer.write_image_data(data).unwrap();
+    drop(writer);
     let t7 = t.elapsed().as_micros();
 
     let total = pipeline_start.elapsed().as_micros();
